@@ -1,13 +1,16 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef _WIN32
@@ -29,6 +32,18 @@ constexpr std::size_t ESA_SIZE = 69;
 constexpr std::size_t ESA_BINS = 32;
 constexpr std::size_t HK_SIZE = 12;
 constexpr double EPSILON = 1e-12;
+
+struct PlotOptions {
+    bool chinese = false;
+    std::size_t smooth_window = 0;
+};
+
+struct CommandLineOptions {
+    std::string input_path;
+    std::string svg_path;
+    std::string png_path;
+    PlotOptions plot;
+};
 
 inline std::uint16_t be16(const std::uint8_t* p) {
     return static_cast<std::uint16_t>((static_cast<std::uint16_t>(p[0]) << 8) | p[1]);
@@ -192,6 +207,27 @@ double scale(double value, double from_lo, double from_hi, double to_lo, double 
     return to_lo + (value - from_lo) * (to_hi - to_lo) / (from_hi - from_lo);
 }
 
+std::vector<double> moving_average(const std::vector<double>& values, std::size_t window) {
+    if (window < 2 || values.size() < 2) return values;
+    window = std::min(window, values.size());
+    if ((window & 1U) == 0) --window;
+    if (window < 2) return values;
+
+    std::vector<double> prefix(values.size() + 1, 0.0), result(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) prefix[i + 1] = prefix[i] + values[i];
+    const std::size_t radius = window / 2;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        const std::size_t begin = i > radius ? i - radius : 0;
+        const std::size_t end = std::min(values.size(), i + radius + 1);
+        result[i] = (prefix[end] - prefix[begin]) / static_cast<double>(end - begin);
+    }
+    return result;
+}
+
+std::string text(bool chinese, std::string_view english, std::string_view chinese_text) {
+    return chinese ? std::string(chinese_text) : std::string(english);
+}
+
 std::string color_for(std::size_t index) {
     static constexpr std::array<const char*, 8> colors = {
         "#16697a", "#d96c06", "#6a994e", "#9b2226", "#6c5ce7", "#0081a7", "#c1121f", "#6b705c"};
@@ -201,11 +237,12 @@ std::string color_for(std::size_t index) {
 void svg_text(std::ostream& out, double x, double y, const std::string& text, int size = 13,
               const char* anchor = "start") {
     out << "<text x=\"" << x << "\" y=\"" << y << "\" font-size=\"" << size
-        << "\" text-anchor=\"" << anchor << "\" fill=\"#17212b\">" << text << "</text>\n";
+        << "\" font-family=\"Microsoft YaHei, SimHei, Arial, sans-serif\" text-anchor=\""
+        << anchor << "\" fill=\"#17212b\">" << text << "</text>\n";
 }
 
 void plot_frame(std::ostream& out, const PlotArea& a, const std::string& title,
-                double x0, double x1, double y0, double y1, bool x_label = false) {
+                double x0, double x1, double y0, double y1, bool x_label, bool chinese) {
     out << "<rect x=\"" << a.x << "\" y=\"" << a.y << "\" width=\"" << a.w << "\" height=\""
         << a.h << "\" fill=\"#ffffff\" stroke=\"#aeb8c2\"/>\n";
     svg_text(out, a.x, a.y - 8, title, 15);
@@ -219,7 +256,8 @@ void plot_frame(std::ostream& out, const PlotArea& a, const std::string& title,
         svg_text(out, x, a.y + a.h + 16, xs.str(), 10, "middle");
         svg_text(out, a.x - 6, y + 4, ys.str(), 10, "end");
     }
-    if (x_label) svg_text(out, a.x + a.w / 2, a.y + a.h + 34, "relative time (min)", 11, "middle");
+    if (x_label) svg_text(out, a.x + a.w / 2, a.y + a.h + 34,
+                          text(chinese, "relative time (min)", "相对时间（分钟）"), 11, "middle");
 }
 
 void plot_series(std::ostream& out, const PlotArea& a, const std::vector<double>& times,
@@ -255,12 +293,12 @@ std::string heat_color(double value) {
 
 void plot_esa(std::ostream& out, const PlotArea& a, const std::string& title,
               const std::vector<double>& times,
-              const std::vector<std::array<std::int16_t, ESA_BINS>>& bins) {
-    if (times.empty()) { plot_frame(out, a, title, 0, 1, 0, 32); svg_text(out, a.x + a.w / 2, a.y + a.h / 2, "no data", 15, "middle"); return; }
+              const std::vector<std::array<std::int16_t, ESA_BINS>>& bins, bool chinese) {
+    if (times.empty()) { plot_frame(out, a, title, 0, 1, 0, 32, false, chinese); svg_text(out, a.x + a.w / 2, a.y + a.h / 2, text(chinese, "no data", "无数据"), 15, "middle"); return; }
     const double first = times.front();
     double x1 = relative_minutes(times.back(), first);
     if (x1 < EPSILON) x1 = 1.0;
-    plot_frame(out, a, title, 0, x1, 0, 32);
+    plot_frame(out, a, title, 0, x1, 0, 32, false, chinese);
     const double cell_w = a.w / bins.size(), cell_h = a.h / ESA_BINS;
     for (std::size_t col = 0; col < bins.size(); ++col) {
         for (std::size_t row = 0; row < ESA_BINS; ++row) {
@@ -272,41 +310,87 @@ void plot_esa(std::ostream& out, const PlotArea& a, const std::string& title,
     }
 }
 
-bool write_svg(const Decoder& d, const std::string& output_path) {
+bool write_svg(const Decoder& d, const std::string& output_path, const PlotOptions& options) {
     std::ofstream out(output_path, std::ios::binary);
     if (!out) return false;
     out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1400\" height=\"1040\" viewBox=\"0 0 1400 1040\">\n"
         << "<rect width=\"1400\" height=\"1040\" fill=\"#f4f7f9\"/>\n";
-    svg_text(out, 700, 34, "GGAK decoded instrument overview", 24, "middle");
+    svg_text(out, 700, 34, text(options.chinese, "GGAK decoded instrument overview", "GGAK 解码仪器概览"), 24, "middle");
     const std::array<PlotArea, 6> areas = {{{80, 85, 550, 230}, {760, 85, 550, 230},
                                                {80, 410, 550, 230}, {760, 410, 550, 230},
                                                {80, 735, 550, 230}, {760, 735, 550, 230}}};
     const std::vector<std::string> mag_labels = {"|B|", "Bx", "By", "Bz"};
-    if (d.mag_t.empty()) { plot_frame(out, areas[0], "FM-VE magnetic field", 0, 1, 0, 1); svg_text(out, 355, 200, "no data", 15, "middle"); }
+    if (d.mag_t.empty()) { plot_frame(out, areas[0], text(options.chinese, "FM-VE magnetic field", "FM-VE 磁场"), 0, 1, 0, 1, false, options.chinese); svg_text(out, 355, 200, text(options.chinese, "no data", "无数据"), 15, "middle"); }
     else {
         const double first = d.mag_t.front(); double x1 = relative_minutes(d.mag_t.back(), first); if (x1 < EPSILON) x1 = 1.0;
-        std::vector<double> all = d.mag_bt; all.insert(all.end(), d.mag_bx.begin(), d.mag_bx.end()); all.insert(all.end(), d.mag_by.begin(), d.mag_by.end()); all.insert(all.end(), d.mag_bz.begin(), d.mag_bz.end());
-        const auto [y0, y1] = range_of(all); plot_frame(out, areas[0], "FM-VE magnetic field (nT)", 0, x1, y0, y1);
-        plot_series(out, areas[0], d.mag_t, d.mag_bt, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[0], d.mag_t, d.mag_bx, first, 0, x1, y0, y1, color_for(1)); plot_series(out, areas[0], d.mag_t, d.mag_by, first, 0, x1, y0, y1, color_for(2)); plot_series(out, areas[0], d.mag_t, d.mag_bz, first, 0, x1, y0, y1, color_for(3));
-        plot_legend(out, areas[0], mag_labels, 4);
+        const auto bt = moving_average(d.mag_bt, options.smooth_window), bx = moving_average(d.mag_bx, options.smooth_window), by = moving_average(d.mag_by, options.smooth_window), bz = moving_average(d.mag_bz, options.smooth_window);
+        std::vector<double> all = bt; all.insert(all.end(), bx.begin(), bx.end()); all.insert(all.end(), by.begin(), by.end()); all.insert(all.end(), bz.begin(), bz.end());
+        const auto [y0, y1] = range_of(all); plot_frame(out, areas[0], text(options.chinese, "FM-VE magnetic field (nT)", "FM-VE 磁场（nT）"), 0, x1, y0, y1, false, options.chinese);
+        plot_series(out, areas[0], d.mag_t, bt, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[0], d.mag_t, bx, first, 0, x1, y0, y1, color_for(1)); plot_series(out, areas[0], d.mag_t, by, first, 0, x1, y0, y1, color_for(2)); plot_series(out, areas[0], d.mag_t, bz, first, 0, x1, y0, y1, color_for(3));
+        plot_legend(out, areas[0], options.chinese ? std::vector<std::string>{"|B|", "Bx", "By", "Bz"} : mag_labels, 4);
     }
-    const std::vector<std::string> particle_labels = {"Ep600", "Ep800", "Ep1100", "Cg-1", "Cg-2", "Cg-3", "Cg-4", "MIP"};
-    if (d.particle_t.empty()) { plot_frame(out, areas[1], "GALS-VE particle channels", 0, 1, 0, 1); svg_text(out, 1035, 200, "no data", 15, "middle"); }
+    const std::vector<std::string> particle_labels = options.chinese
+        ? std::vector<std::string>{"Ep>=600MeV", "Ep>=800MeV", "Ep>=1100MeV", "Cg-1", "Cg-2", "Cg-3", "Cg-4", "MIP"}
+        : std::vector<std::string>{"Ep600", "Ep800", "Ep1100", "Cg-1", "Cg-2", "Cg-3", "Cg-4", "MIP"};
+    if (d.particle_t.empty()) { plot_frame(out, areas[1], text(options.chinese, "GALS-VE particle channels", "GALS-VE 粒子通道"), 0, 1, 0, 1, false, options.chinese); svg_text(out, 1035, 200, text(options.chinese, "no data", "无数据"), 15, "middle"); }
     else {
         const double first = d.particle_t.front(); double x1 = relative_minutes(d.particle_t.back(), first); if (x1 < EPSILON) x1 = 1.0;
-        std::vector<double> log_values; for (const auto& channel : d.particle_ch) for (auto v : channel) log_values.push_back(std::log10(std::max(1u, static_cast<unsigned>(v))));
-        const auto [y0, y1] = range_of(log_values); plot_frame(out, areas[1], "GALS-VE particle channels (log10 count)", 0, x1, y0, y1);
-        for (std::size_t ch = 0; ch < 8; ++ch) { std::vector<double> transformed; transformed.reserve(d.particle_ch[ch].size()); for (auto v : d.particle_ch[ch]) transformed.push_back(std::log10(std::max(1u, static_cast<unsigned>(v)))); plot_series(out, areas[1], d.particle_t, transformed, first, 0, x1, y0, y1, color_for(ch)); }
+        std::array<std::vector<double>, 8> channels; std::vector<double> log_values;
+        for (std::size_t ch = 0; ch < 8; ++ch) { for (auto v : d.particle_ch[ch]) channels[ch].push_back(std::log10(std::max(1u, static_cast<unsigned>(v)))); channels[ch] = moving_average(channels[ch], options.smooth_window); log_values.insert(log_values.end(), channels[ch].begin(), channels[ch].end()); }
+        const auto [y0, y1] = range_of(log_values); plot_frame(out, areas[1], text(options.chinese, "GALS-VE particle channels (log10 count)", "GALS-VE 粒子通道（log10 计数）"), 0, x1, y0, y1, false, options.chinese);
+        for (std::size_t ch = 0; ch < 8; ++ch) plot_series(out, areas[1], d.particle_t, channels[ch], first, 0, x1, y0, y1, color_for(ch));
         plot_legend(out, areas[1], particle_labels, 8);
     }
-    plot_esa(out, areas[2], "SKIF-VE/V ESA spectrum", d.esa_v_t, d.esa_v_bins);
-    plot_esa(out, areas[3], "SKIF-VE/G ESA spectrum", d.esa_g_t, d.esa_g_bins);
-    if (d.hk_tsi_t.empty()) { plot_frame(out, areas[4], "Platform ISP-2M TSI", 0, 1, 0, 1, true); svg_text(out, 355, 850, "no data", 15, "middle"); }
-    else { const double first = d.hk_tsi_t.front(); double x1 = relative_minutes(d.hk_tsi_t.back(), first); if (x1 < EPSILON) x1 = 1.0; const auto [y0, y1] = range_of(d.hk_tsi_v); plot_frame(out, areas[4], "Platform ISP-2M TSI (W/m2)", 0, x1, y0, y1, true); plot_series(out, areas[4], d.hk_tsi_t, d.hk_tsi_v, first, 0, x1, y0, y1, color_for(0)); }
-    if (d.ser_v_t.empty()) { plot_frame(out, areas[5], "SKIF-VE SER", 0, 1, 0, 1, true); svg_text(out, 1035, 850, "no data", 15, "middle"); }
-    else { const double first = d.ser_v_t.front(); double x1 = relative_minutes(d.ser_v_t.back(), first); if (x1 < EPSILON) x1 = 1.0; std::vector<double> all = d.ser_v_v; all.insert(all.end(), d.ser_g_v.begin(), d.ser_g_v.end()); const auto [y0, y1] = range_of(all); plot_frame(out, areas[5], "SKIF-VE SER (counts/frame)", 0, x1, y0, y1, true); plot_series(out, areas[5], d.ser_v_t, d.ser_v_v, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[5], d.ser_g_t, d.ser_g_v, first, 0, x1, y0, y1, color_for(1)); plot_legend(out, areas[5], {"VE/V", "VE/G"}, 2); }
+    plot_esa(out, areas[2], text(options.chinese, "SKIF-VE/V ESA spectrum", "SKIF-VE/V ESA 能谱"), d.esa_v_t, d.esa_v_bins, options.chinese);
+    plot_esa(out, areas[3], text(options.chinese, "SKIF-VE/G ESA spectrum", "SKIF-VE/G ESA 能谱"), d.esa_g_t, d.esa_g_bins, options.chinese);
+    if (d.hk_tsi_t.empty()) { plot_frame(out, areas[4], text(options.chinese, "Platform ISP-2M TSI", "平台 ISP-2M TSI"), 0, 1, 0, 1, true, options.chinese); svg_text(out, 355, 850, text(options.chinese, "no data", "无数据"), 15, "middle"); }
+    else { const auto values = moving_average(d.hk_tsi_v, options.smooth_window); const double first = d.hk_tsi_t.front(); double x1 = relative_minutes(d.hk_tsi_t.back(), first); if (x1 < EPSILON) x1 = 1.0; const auto [y0, y1] = range_of(values); plot_frame(out, areas[4], text(options.chinese, "Platform ISP-2M TSI (W/m2)", "平台 ISP-2M TSI（W/m2）"), 0, x1, y0, y1, true, options.chinese); plot_series(out, areas[4], d.hk_tsi_t, values, first, 0, x1, y0, y1, color_for(0)); }
+    if (d.ser_v_t.empty()) { plot_frame(out, areas[5], text(options.chinese, "SKIF-VE SER", "SKIF-VE SER"), 0, 1, 0, 1, true, options.chinese); svg_text(out, 1035, 850, text(options.chinese, "no data", "无数据"), 15, "middle"); }
+    else { const auto v = moving_average(d.ser_v_v, options.smooth_window), g = moving_average(d.ser_g_v, options.smooth_window); const double first = d.ser_v_t.front(); double x1 = relative_minutes(d.ser_v_t.back(), first); if (x1 < EPSILON) x1 = 1.0; std::vector<double> all = v; all.insert(all.end(), g.begin(), g.end()); const auto [y0, y1] = range_of(all); plot_frame(out, areas[5], text(options.chinese, "SKIF-VE SER (counts/frame)", "SKIF-VE SER（计数/帧）"), 0, x1, y0, y1, true, options.chinese); plot_series(out, areas[5], d.ser_v_t, v, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[5], d.ser_g_t, g, first, 0, x1, y0, y1, color_for(1)); plot_legend(out, areas[5], {"VE/V", "VE/G"}, 2); }
     out << "</svg>\n";
     return static_cast<bool>(out);
+}
+
+bool render_png(const std::string& svg_path, const std::string& png_path) {
+    if (svg_path.find('"') != std::string::npos || png_path.find('"') != std::string::npos) return false;
+    const std::string command = "magick -background white \"" + svg_path + "\" \"" + png_path + "\"";
+    return std::system(command.c_str()) == 0 && std::filesystem::is_regular_file(png_path);
+}
+
+void print_usage() {
+    std::cerr << "用法: ggak_decode <input.cadu> [选项]\n"
+              << "  -o, --output <file.svg>  指定 SVG 输出路径\n"
+              << "  --png [file.png]         同时渲染 PNG；未指定路径时使用 SVG 同名路径\n"
+              << "  --chinese                使用中文图表文字\n"
+              << "  --smooth [window]        对折线使用中心移动平均，默认窗口为 5\n";
+}
+
+bool parse_options(int argc, char** argv, CommandLineOptions& options) {
+    if (argc < 2) return false;
+    options.input_path = argv[1];
+    options.svg_path = options.input_path + ".svg";
+    bool png_requested = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if ((arg == "-o" || arg == "--output") && i + 1 < argc) options.svg_path = argv[++i];
+        else if (arg == "--chinese") options.plot.chinese = true;
+        else if (arg == "--png") {
+            png_requested = true;
+            if (i + 1 < argc && std::string_view(argv[i + 1]).rfind("--", 0) != 0 && std::string_view(argv[i + 1]) != "-o") options.png_path = argv[++i];
+        } else if (arg == "--smooth") {
+            options.plot.smooth_window = 5;
+            if (i + 1 < argc && std::string_view(argv[i + 1]).rfind("--", 0) != 0 && std::string_view(argv[i + 1]) != "-o") {
+                try { options.plot.smooth_window = static_cast<std::size_t>(std::stoull(argv[++i])); }
+                catch (const std::exception&) { return false; }
+            }
+            if (options.plot.smooth_window == 0) return false;
+        } else return false;
+    }
+    if (png_requested && options.png_path.empty()) {
+        const auto extension = options.svg_path.find_last_of('.');
+        options.png_path = (extension == std::string::npos ? options.svg_path : options.svg_path.substr(0, extension)) + ".png";
+    }
+    return true;
 }
 
 } // namespace
@@ -316,11 +400,10 @@ int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
-    if (argc < 2 || argc > 4 || (argc == 4 && std::string(argv[2]) != "-o" && std::string(argv[2]) != "--output")) { std::cerr << "用法: ggak_decode <input.cadu> [-o output.svg]\n"; return 2; }
-    const std::string input_path = argv[1];
-    const std::string output_path = argc == 4 ? argv[3] : input_path + ".svg";
-    std::ifstream in(input_path, std::ios::binary);
-    if (!in) { std::cerr << "无法打开输入文件: " << input_path << '\n'; return 1; }
+    CommandLineOptions options;
+    if (!parse_options(argc, argv, options)) { print_usage(); return 2; }
+    std::ifstream in(options.input_path, std::ios::binary);
+    if (!in) { std::cerr << "无法打开输入文件: " << options.input_path << '\n'; return 1; }
     Decoder decoder;
     in.seekg(0, std::ios::end);
     const auto bytes = in.tellg();
@@ -330,7 +413,11 @@ int main(int argc, char** argv) {
     while (in.read(reinterpret_cast<char*>(frame.data()), frame.size())) decoder.push(frame);
     print_summary(decoder);
     if (decoder.total == 0) return 1;
-    if (!write_svg(decoder, output_path)) { std::cerr << "无法写入图表: " << output_path << '\n'; return 1; }
-    std::cout << "图表已保存至: " << output_path << '\n';
+    if (!write_svg(decoder, options.svg_path, options.plot)) { std::cerr << "无法写入图表: " << options.svg_path << '\n'; return 1; }
+    std::cout << "图表已保存至: " << options.svg_path << '\n';
+    if (!options.png_path.empty()) {
+        if (!render_png(options.svg_path, options.png_path)) { std::cerr << "无法渲染 PNG，请确认 magick 已安装并位于 PATH 中\n"; return 1; }
+        std::cout << "PNG 已保存至: " << options.png_path << '\n';
+    }
     return 0;
 }
