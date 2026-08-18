@@ -364,6 +364,27 @@ bool render_png(const std::string& svg_path, const std::string& png_path) {
     return std::system(command.c_str()) == 0 && std::filesystem::is_regular_file(png_path);
 }
 
+bool ask_delete_svg(const std::string& svg_path, const std::string& png_path) {
+    std::error_code ec;
+    const auto svg_absolute = std::filesystem::absolute(svg_path, ec).lexically_normal();
+    if (ec) return false;
+    const auto png_absolute = std::filesystem::absolute(png_path, ec).lexically_normal();
+    if (ec || svg_absolute == png_absolute) return false;
+
+    std::cout << "PNG 已生成。是否删除 SVG 文件 " << svg_path << "？[y/N] " << std::flush;
+    std::string answer;
+    if (!std::getline(std::cin, answer)) return false;
+    if (answer != "y" && answer != "Y") return false;
+
+    std::filesystem::remove(svg_path, ec);
+    if (ec) {
+        std::cerr << "无法删除 SVG 文件: " << ec.message() << '\n';
+        return false;
+    }
+    std::cout << "SVG 已删除: " << svg_path << '\n';
+    return true;
+}
+
 void print_usage() {
     std::cerr << "用法: ggak_decode <input.cadu> [选项]\n"
               << "  -o, --output <file.svg>  指定 SVG 输出路径\n"
@@ -425,6 +446,7 @@ int main(int argc, char** argv) {
     if (!options.png_path.empty()) {
         if (!render_png(options.svg_path, options.png_path)) { std::cerr << "无法渲染 PNG，请确认 magick 已安装并位于 PATH 中\n"; return 1; }
         std::cout << "PNG 已保存至: " << options.png_path << '\n';
+        ask_delete_svg(options.svg_path, options.png_path);
     }
     return 0;
 }
