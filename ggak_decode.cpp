@@ -242,10 +242,12 @@ void svg_text(std::ostream& out, double x, double y, const std::string& text, in
 }
 
 void plot_frame(std::ostream& out, const PlotArea& a, const std::string& title,
-                double x0, double x1, double y0, double y1, bool x_label, bool chinese) {
+                double x0, double x1, double y0, double y1, bool x_label, bool chinese,
+                const std::string& subtitle = {}) {
     out << "<rect x=\"" << a.x << "\" y=\"" << a.y << "\" width=\"" << a.w << "\" height=\""
         << a.h << "\" fill=\"#ffffff\" stroke=\"#aeb8c2\"/>\n";
-    svg_text(out, a.x, a.y - 8, title, 15);
+    svg_text(out, a.x, subtitle.empty() ? a.y - 8 : a.y - 20, title, 15);
+    if (!subtitle.empty()) svg_text(out, a.x, a.y - 6, subtitle, 10);
     for (int i = 0; i <= 4; ++i) {
         const double x = a.x + a.w * i / 4.0, y = a.y + a.h * i / 4.0;
         out << "<path d=\"M " << x << ' ' << a.y << " V " << a.y + a.h << " M " << a.x << ' ' << y
@@ -293,12 +295,13 @@ std::string heat_color(double value) {
 
 void plot_esa(std::ostream& out, const PlotArea& a, const std::string& title,
               const std::vector<double>& times,
-              const std::vector<std::array<std::int16_t, ESA_BINS>>& bins, bool chinese) {
-    if (times.empty()) { plot_frame(out, a, title, 0, 1, 0, 32, false, chinese); svg_text(out, a.x + a.w / 2, a.y + a.h / 2, text(chinese, "no data", "无数据"), 15, "middle"); return; }
+              const std::vector<std::array<std::int16_t, ESA_BINS>>& bins, bool chinese,
+              const std::string& subtitle = {}) {
+    if (times.empty()) { plot_frame(out, a, title, 0, 1, 0, 32, false, chinese, subtitle); svg_text(out, a.x + a.w / 2, a.y + a.h / 2, text(chinese, "no data", "无数据"), 15, "middle"); return; }
     const double first = times.front();
     double x1 = relative_minutes(times.back(), first);
     if (x1 < EPSILON) x1 = 1.0;
-    plot_frame(out, a, title, 0, x1, 0, 32, false, chinese);
+    plot_frame(out, a, title, 0, x1, 0, 32, false, chinese, subtitle);
     const double cell_w = a.w / bins.size(), cell_h = a.h / ESA_BINS;
     for (std::size_t col = 0; col < bins.size(); ++col) {
         for (std::size_t row = 0; row < ESA_BINS; ++row) {
@@ -320,33 +323,37 @@ bool write_svg(const Decoder& d, const std::string& output_path, const PlotOptio
                                                {80, 410, 550, 230}, {760, 410, 550, 230},
                                                {80, 735, 550, 230}, {760, 735, 550, 230}}};
     const std::vector<std::string> mag_labels = {"|B|", "Bx", "By", "Bz"};
-    if (d.mag_t.empty()) { plot_frame(out, areas[0], text(options.chinese, "FM-VE magnetic field", "FM-VE 磁场"), 0, 1, 0, 1, false, options.chinese); svg_text(out, 355, 200, text(options.chinese, "no data", "无数据"), 15, "middle"); }
+    const std::string skif_description = options.chinese ? "GGAK-E/SKIF-6：粒子辐射谱仪" : "";
+    const std::string gals_description = options.chinese ? "GGAK-E/GALS-E：银河宇宙线探测器" : "";
+    const std::string isp_description = options.chinese ? "GGAK-E/ISP-2M：太阳常数传感器" : "";
+    const std::string fm_description = options.chinese ? "GGAK-E/FM-E：磁强计" : "";
+    if (d.mag_t.empty()) { plot_frame(out, areas[0], text(options.chinese, "FM-VE magnetic field", "FM-VE 磁场"), 0, 1, 0, 1, false, options.chinese, fm_description); svg_text(out, 355, 200, text(options.chinese, "no data", "无数据"), 15, "middle"); }
     else {
         const double first = d.mag_t.front(); double x1 = relative_minutes(d.mag_t.back(), first); if (x1 < EPSILON) x1 = 1.0;
         const auto bt = moving_average(d.mag_bt, options.smooth_window), bx = moving_average(d.mag_bx, options.smooth_window), by = moving_average(d.mag_by, options.smooth_window), bz = moving_average(d.mag_bz, options.smooth_window);
         std::vector<double> all = bt; all.insert(all.end(), bx.begin(), bx.end()); all.insert(all.end(), by.begin(), by.end()); all.insert(all.end(), bz.begin(), bz.end());
-        const auto [y0, y1] = range_of(all); plot_frame(out, areas[0], text(options.chinese, "FM-VE magnetic field (nT)", "FM-VE 磁场（nT）"), 0, x1, y0, y1, false, options.chinese);
+        const auto [y0, y1] = range_of(all); plot_frame(out, areas[0], text(options.chinese, "FM-VE magnetic field (nT)", "FM-VE 磁场（nT）"), 0, x1, y0, y1, false, options.chinese, fm_description);
         plot_series(out, areas[0], d.mag_t, bt, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[0], d.mag_t, bx, first, 0, x1, y0, y1, color_for(1)); plot_series(out, areas[0], d.mag_t, by, first, 0, x1, y0, y1, color_for(2)); plot_series(out, areas[0], d.mag_t, bz, first, 0, x1, y0, y1, color_for(3));
         plot_legend(out, areas[0], options.chinese ? std::vector<std::string>{"|B|", "Bx", "By", "Bz"} : mag_labels, 4);
     }
     const std::vector<std::string> particle_labels = options.chinese
         ? std::vector<std::string>{"Ep>=600MeV", "Ep>=800MeV", "Ep>=1100MeV", "Cg-1", "Cg-2", "Cg-3", "Cg-4", "MIP"}
         : std::vector<std::string>{"Ep600", "Ep800", "Ep1100", "Cg-1", "Cg-2", "Cg-3", "Cg-4", "MIP"};
-    if (d.particle_t.empty()) { plot_frame(out, areas[1], text(options.chinese, "GALS-VE particle channels", "GALS-VE 粒子通道"), 0, 1, 0, 1, false, options.chinese); svg_text(out, 1035, 200, text(options.chinese, "no data", "无数据"), 15, "middle"); }
+    if (d.particle_t.empty()) { plot_frame(out, areas[1], text(options.chinese, "GALS-VE particle channels", "GALS-VE 粒子通道"), 0, 1, 0, 1, false, options.chinese, gals_description); svg_text(out, 1035, 200, text(options.chinese, "no data", "无数据"), 15, "middle"); }
     else {
         const double first = d.particle_t.front(); double x1 = relative_minutes(d.particle_t.back(), first); if (x1 < EPSILON) x1 = 1.0;
         std::array<std::vector<double>, 8> channels; std::vector<double> log_values;
         for (std::size_t ch = 0; ch < 8; ++ch) { for (auto v : d.particle_ch[ch]) channels[ch].push_back(std::log10(std::max(1u, static_cast<unsigned>(v)))); channels[ch] = moving_average(channels[ch], options.smooth_window); log_values.insert(log_values.end(), channels[ch].begin(), channels[ch].end()); }
-        const auto [y0, y1] = range_of(log_values); plot_frame(out, areas[1], text(options.chinese, "GALS-VE particle channels (log10 count)", "GALS-VE 粒子通道（log10 计数）"), 0, x1, y0, y1, false, options.chinese);
+        const auto [y0, y1] = range_of(log_values); plot_frame(out, areas[1], text(options.chinese, "GALS-VE particle channels (log10 count)", "GALS-VE 粒子通道（log10 计数）"), 0, x1, y0, y1, false, options.chinese, gals_description);
         for (std::size_t ch = 0; ch < 8; ++ch) plot_series(out, areas[1], d.particle_t, channels[ch], first, 0, x1, y0, y1, color_for(ch));
         plot_legend(out, areas[1], particle_labels, 8);
     }
-    plot_esa(out, areas[2], text(options.chinese, "SKIF-VE/V ESA spectrum", "SKIF-VE/V ESA 能谱"), d.esa_v_t, d.esa_v_bins, options.chinese);
-    plot_esa(out, areas[3], text(options.chinese, "SKIF-VE/G ESA spectrum", "SKIF-VE/G ESA 能谱"), d.esa_g_t, d.esa_g_bins, options.chinese);
-    if (d.hk_tsi_t.empty()) { plot_frame(out, areas[4], text(options.chinese, "Platform ISP-2M TSI", "平台 ISP-2M TSI"), 0, 1, 0, 1, true, options.chinese); svg_text(out, 355, 850, text(options.chinese, "no data", "无数据"), 15, "middle"); }
-    else { const auto values = moving_average(d.hk_tsi_v, options.smooth_window); const double first = d.hk_tsi_t.front(); double x1 = relative_minutes(d.hk_tsi_t.back(), first); if (x1 < EPSILON) x1 = 1.0; const auto [y0, y1] = range_of(values); plot_frame(out, areas[4], text(options.chinese, "Platform ISP-2M TSI (W/m2)", "平台 ISP-2M TSI（W/m2）"), 0, x1, y0, y1, true, options.chinese); plot_series(out, areas[4], d.hk_tsi_t, values, first, 0, x1, y0, y1, color_for(0)); }
-    if (d.ser_v_t.empty()) { plot_frame(out, areas[5], text(options.chinese, "SKIF-VE SER", "SKIF-VE SER"), 0, 1, 0, 1, true, options.chinese); svg_text(out, 1035, 850, text(options.chinese, "no data", "无数据"), 15, "middle"); }
-    else { const auto v = moving_average(d.ser_v_v, options.smooth_window), g = moving_average(d.ser_g_v, options.smooth_window); const double first = d.ser_v_t.front(); double x1 = relative_minutes(d.ser_v_t.back(), first); if (x1 < EPSILON) x1 = 1.0; std::vector<double> all = v; all.insert(all.end(), g.begin(), g.end()); const auto [y0, y1] = range_of(all); plot_frame(out, areas[5], text(options.chinese, "SKIF-VE SER (counts/frame)", "SKIF-VE SER（计数/帧）"), 0, x1, y0, y1, true, options.chinese); plot_series(out, areas[5], d.ser_v_t, v, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[5], d.ser_g_t, g, first, 0, x1, y0, y1, color_for(1)); plot_legend(out, areas[5], {"VE/V", "VE/G"}, 2); }
+    plot_esa(out, areas[2], text(options.chinese, "SKIF-VE/V ESA spectrum", "SKIF-VE/V ESA 能谱"), d.esa_v_t, d.esa_v_bins, options.chinese, skif_description);
+    plot_esa(out, areas[3], text(options.chinese, "SKIF-VE/G ESA spectrum", "SKIF-VE/G ESA 能谱"), d.esa_g_t, d.esa_g_bins, options.chinese, skif_description);
+    if (d.hk_tsi_t.empty()) { plot_frame(out, areas[4], text(options.chinese, "Platform ISP-2M TSI", "平台 ISP-2M TSI"), 0, 1, 0, 1, true, options.chinese, isp_description); svg_text(out, 355, 850, text(options.chinese, "no data", "无数据"), 15, "middle"); }
+    else { const auto values = moving_average(d.hk_tsi_v, options.smooth_window); const double first = d.hk_tsi_t.front(); double x1 = relative_minutes(d.hk_tsi_t.back(), first); if (x1 < EPSILON) x1 = 1.0; const auto [y0, y1] = range_of(values); plot_frame(out, areas[4], text(options.chinese, "Platform ISP-2M TSI (W/m2)", "平台 ISP-2M TSI（W/m2）"), 0, x1, y0, y1, true, options.chinese, isp_description); plot_series(out, areas[4], d.hk_tsi_t, values, first, 0, x1, y0, y1, color_for(0)); }
+    if (d.ser_v_t.empty()) { plot_frame(out, areas[5], text(options.chinese, "SKIF-VE SER", "SKIF-VE SER"), 0, 1, 0, 1, true, options.chinese, skif_description); svg_text(out, 1035, 850, text(options.chinese, "no data", "无数据"), 15, "middle"); }
+    else { const auto v = moving_average(d.ser_v_v, options.smooth_window), g = moving_average(d.ser_g_v, options.smooth_window); const double first = d.ser_v_t.front(); double x1 = relative_minutes(d.ser_v_t.back(), first); if (x1 < EPSILON) x1 = 1.0; std::vector<double> all = v; all.insert(all.end(), g.begin(), g.end()); const auto [y0, y1] = range_of(all); plot_frame(out, areas[5], text(options.chinese, "SKIF-VE SER (counts/frame)", "SKIF-VE SER（计数/帧）"), 0, x1, y0, y1, true, options.chinese, skif_description); plot_series(out, areas[5], d.ser_v_t, v, first, 0, x1, y0, y1, color_for(0)); plot_series(out, areas[5], d.ser_g_t, g, first, 0, x1, y0, y1, color_for(1)); plot_legend(out, areas[5], {"VE/V", "VE/G"}, 2); }
     out << "</svg>\n";
     return static_cast<bool>(out);
 }

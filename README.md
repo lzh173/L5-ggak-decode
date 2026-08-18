@@ -42,6 +42,20 @@ cmake --build build --config Release
 
 `--smooth` 未指定窗口时默认使用 5 点移动平均。平滑仅作用于折线图，不修改 ESA 热图和原始解码数据。
 
+## 仪器说明
+
+| 仪器 | 英文描述 | 中文翻译 |
+| --- | --- | --- |
+| [GGAK-E/SKIF-6](https://space.oscar.wmo.int/instruments/view/ggak_e_skif_6) | Corpuscular radiation spectrometer | 粒子辐射谱仪 |
+| [GGAK-E/GALS-E](https://space.oscar.wmo.int/instruments/view/ggak_e_gals_e) | Detector of galactic cosmic rays | 银河宇宙线探测器 |
+| [GGAK-E/ISP-2M](https://space.oscar.wmo.int/instruments/view/ggak_e_isp_2m) | Solar constant sensor | 太阳常数传感器 |
+| [GGAK-E/VUSS-E](https://space.oscar.wmo.int/instruments/view/ggak_e_vuss_e) | Solar UV radiation sensor | 太阳紫外辐射传感器 |
+| [GGAK-E/FM-E](https://space.oscar.wmo.int/instruments/view/ggak_e_fm_e) | Magnetometer instrument | 磁强计 |
+| [GGAK-E/DIR-E](https://space.oscar.wmo.int/instruments/view/ggak_e_dir_e) | Solar X-ray radiation flux sensor | 太阳 X 射线辐射通量传感器 |
+| [GGAK-E/SKL-E](https://space.oscar.wmo.int/instruments/view/ggak_e_skl_e) | Solar cosmic rays spectrometer | 太阳宇宙线谱仪 |
+
+使用 `--chinese` 时，当前已解码的 FM-E、GALS-E、SKIF-6 和 ISP-2M 数据面板会显示对应中文说明。VUSS-E、DIR-E 和 SKL-E 尚无对应的数据解码分支，因此仅在本说明表中列出。
+
 ## 许可证
 
 本项目采用 [GNU Affero General Public License v3.0](LICENSE) 许可证。
