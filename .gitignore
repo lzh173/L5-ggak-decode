@@ -5,3 +5,8 @@
 
 /.vs
 /out/build/x64-Debug
+/build-gui/
+/build-gui-clean/
+/build-gui-final/
+/build-gui-win/
+/build-gui-ninja/
