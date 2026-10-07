@@ -42,6 +42,7 @@ struct CommandLineOptions {
     std::string input_path;
     std::string svg_path;
     std::string png_path;
+    bool strict_checksum = false;
     PlotOptions plot;
 };
 
@@ -82,9 +83,13 @@ struct Decoder {
         return static_cast<std::uint16_t>(sum) == be16(cadu.data() + CADU_SIZE - 2);
     }
 
-    void push(const std::array<std::uint8_t, CADU_SIZE>& cadu) {
+    void push(const std::array<std::uint8_t, CADU_SIZE>& cadu, bool strict_checksum = false) {
         ++total;
-        if (checksum_ok(cadu)) ++checksum_pass; else ++checksum_fail;
+        const bool valid_checksum = checksum_ok(cadu);
+        if (valid_checksum) ++checksum_pass; else {
+            ++checksum_fail;
+            if (strict_checksum) return;
+        }
 
         const auto* p = cadu.data();
         const std::uint8_t ft = p[4];
@@ -386,6 +391,7 @@ bool ask_delete_svg(const std::string& svg_path, const std::string& png_path) {
 }
 
 void print_usage() {
+    std::cerr << "  --strict                 reject CADU frames with invalid checksums\n";
     std::cerr << "用法: ggak_decode <input.cadu> [选项]\n"
               << "  -o, --output <file.svg>  指定 SVG 输出路径\n"
               << "  --png [file.png]         同时渲染 PNG；未指定路径时使用 SVG 同名路径\n"
@@ -402,6 +408,7 @@ bool parse_options(int argc, char** argv, CommandLineOptions& options) {
         const std::string arg = argv[i];
         if ((arg == "-o" || arg == "--output") && i + 1 < argc) options.svg_path = argv[++i];
         else if (arg == "--chinese") options.plot.chinese = true;
+        else if (arg == "--strict") options.strict_checksum = true;
         else if (arg == "--png") {
             png_requested = true;
             if (i + 1 < argc && std::string_view(argv[i + 1]).rfind("--", 0) != 0 && std::string_view(argv[i + 1]) != "-o") options.png_path = argv[++i];
@@ -438,7 +445,7 @@ int main(int argc, char** argv) {
     if (bytes > 0) decoder.reserve(static_cast<std::uint64_t>(bytes) / CADU_SIZE);
     in.seekg(0, std::ios::beg);
     std::array<std::uint8_t, CADU_SIZE> frame{};
-    while (in.read(reinterpret_cast<char*>(frame.data()), frame.size())) decoder.push(frame);
+    while (in.read(reinterpret_cast<char*>(frame.data()), frame.size())) decoder.push(frame, options.strict_checksum);
     print_summary(decoder);
     if (decoder.total == 0) return 1;
     if (!write_svg(decoder, options.svg_path, options.plot)) { std::cerr << "无法写入图表: " << options.svg_path << '\n'; return 1; }
