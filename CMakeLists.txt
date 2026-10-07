@@ -79,6 +79,7 @@ else()
     target_link_libraries(ggak_gui PRIVATE imgui_lib OpenGL::GL)
 endif()
 target_include_directories(ggak_gui PRIVATE "${imgui_native_dir}" "${imgui_native_backends_dir}")
+target_include_directories(ggak_gui PRIVATE "${nng_SOURCE_DIR}/include")
 
 if (MSVC)
     target_compile_options(ggak_decode PRIVATE  /W4 /permissive-)
