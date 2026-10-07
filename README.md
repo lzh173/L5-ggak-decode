@@ -37,6 +37,10 @@ cmake --build build-gui
 
 GUI 中输入 CADU 文件路径后点击“加载并解码”，可以查看校验统计以及 FM-VE、GALS-VE、ISP-2M 和 SER 数据曲线；“严格校验”会跳过校验失败的帧。
 
+Dear ImGui GUI 同样支持 Linux。Linux 构建使用 GLFW 的 X11/Wayland 后端和 OpenGL3，需要安装系统 OpenGL、X11/Wayland 开发包。GitHub Actions 会在 Windows 和 Ubuntu 上分别构建命令行解码器与 GUI，并上传两个平台的构建产物。
+
+当前 GUI 不是 Android 目标：它依赖 GLFW 桌面窗口、OpenGL3 和 Windows 文件选择器。Android 需要新增 Android 原生或 SDL 后端、触摸交互、文件访问权限和 Android 应用工程，后续可以作为独立移植目标加入。
+
 ## 使用
 
 ```powershell
