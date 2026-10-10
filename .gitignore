@@ -10,3 +10,9 @@
 /build-gui-final/
 /build-gui-win/
 /build-gui-ninja/
+imgui.ini
+android/.gradle/
+android/local.properties
+android/**/build/
+.cxx/
+build-android-port/

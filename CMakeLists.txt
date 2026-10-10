@@ -62,7 +62,7 @@ target_include_directories(imgui_lib PRIVATE "${imgui_native_dir}" "${imgui_nati
 target_include_directories(imgui_lib INTERFACE "${imgui_native_dir}" "${imgui_native_backends_dir}")
 target_link_libraries(imgui_lib PUBLIC glfw)
 
-add_executable(ggak_gui ggak_gui.cpp)
+add_executable(ggak_gui ggak_gui.cpp ggak_core.cpp)
 target_compile_features(ggak_gui PRIVATE cxx_std_17)
 if (MSVC)
     target_compile_options(ggak_gui PRIVATE /utf-8)

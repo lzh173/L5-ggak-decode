@@ -1,4 +1,5 @@
 #include "imgui.h"
+#include "ggak_core.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
@@ -27,31 +28,16 @@
 #endif
 
 namespace {
-constexpr size_t FRAME = 224, PAYLOAD = 209, ESA_BINS = 32, ESA_PACKET = 69;
-constexpr double GGAK_TICK_SECONDS = 254.84;
-constexpr double GGAK_FINE_STEP = GGAK_TICK_SECONDS / 256.0;
+using ggak::Data;
+using ggak::EsaRow;
+using ggak::ESA_BINS;
+using ggak::FRAME;
+using ggak::FrameDecodeState;
+using ggak::be16;
+using ggak::decode_file;
+using ggak::decode_frame;
+using ggak::valid;
 constexpr std::array<uint8_t, 4> CADU_ASM = {0x1a, 0xcf, 0xfc, 0x1d};
-using EsaRow = std::array<int16_t, ESA_BINS>;
-struct Data {
-    uint64_t total=0, pass=0, fail=0, fill=0; int source=0; std::string profile="未知";
-    std::array<std::vector<float>, 4> mag;
-    std::vector<float> mag_voltage;
-    std::array<std::vector<float>, 8> particle;
-    std::vector<float> tsi, ser; std::vector<EsaRow> esa_v, esa_g;
-    std::array<std::vector<float>, 5> housekeeping_a, housekeeping_b, ser_channels;
-    std::vector<std::vector<float>> skl_spectral;
-    std::vector<double> mag_time, particle_time, tsi_time, ser_time, esa_v_time, esa_g_time, spectral_time;
-    uint64_t spectral_packets=0, housekeeping_b_count=0, frame_gaps=0, missing_frames=0;
-    std::array<uint64_t,256> frame_types{};
-    std::array<uint16_t,256> last_channel{};
-    std::array<bool,256> have_channel{};
-    uint16_t last_master=0; bool have_master=false;
-};
-struct FrameDecodeState {
-    int previous_coarse = -1;
-    uint32_t coarse_offset = 0;
-    std::vector<uint8_t> spectral_buffer;
-};
 
 #ifdef _WIN32
 struct TcpSource {
@@ -77,88 +63,6 @@ struct TcpSource {
     FrameDecodeState decoder;
 };
 #endif
-uint16_t be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
-bool valid(const std::array<uint8_t,FRAME>& f) { uint32_t s=0; for(size_t i=0;i<FRAME-2;i++) s+=f[i]; return uint16_t(s)==be16(f.data()+FRAME-2); }
-
-double frame_time(const std::array<uint8_t, FRAME>& f, const FrameDecodeState& state) {
-    return (double(be16(f.data()+10)) + state.coarse_offset) * GGAK_TICK_SECONDS + double(f[12]) * GGAK_FINE_STEP;
-}
-
-void decode_spectral(const uint8_t* payload, size_t len, uint8_t marker, uint8_t fill,
-                     std::vector<std::vector<float>>& output, std::vector<uint8_t>& buffer) {
-    std::vector<uint8_t> data;
-    data.reserve(buffer.size()+len); data.insert(data.end(),buffer.begin(),buffer.end()); data.insert(data.end(),payload,payload+len); buffer.clear();
-    size_t off=0;
-    while(off<data.size()) {
-        while(off<data.size() && data[off]!=marker) ++off;
-        if(off>=data.size()) break;
-        size_t next=off+10;
-        if(next>data.size()) { buffer.insert(buffer.end(),data.begin()+off,data.end()); break; }
-        while(next<data.size() && data[next]!=marker) ++next;
-        size_t packet_len=next-off;
-        if(next==data.size()) {
-            size_t trimmed=packet_len; while(trimmed>3 && data[off+trimmed-1]==fill) --trimmed;
-            if(trimmed==packet_len) { buffer.insert(buffer.end(),data.begin()+off,data.end()); break; }
-            packet_len=trimmed;
-        } else while(packet_len>3 && data[off+packet_len-1]==fill) --packet_len;
-        size_t bytes=packet_len-3;
-        if(packet_len>=10 && (bytes%2)==0) {
-            std::vector<float> row; row.reserve(bytes/2);
-            for(size_t i=0;i<bytes;i+=2) row.push_back(float(int16_t(be16(data.data()+off+3+i))));
-            output.push_back(std::move(row)); off=next;
-        } else ++off;
-    }
-}
-
-void decode_frame(const std::array<uint8_t, FRAME>& f, bool strict, Data& d, FrameDecodeState& state) {
-    ++d.total; const bool ok=valid(f); ok ? ++d.pass : ++d.fail; if(strict&&!ok) return;
-    const uint8_t type=f[4];
-    ++d.frame_types[type];
-    if(type==0x77||type==0x88) { ++d.fill; return; }
-    const uint16_t master=be16(f.data()+5), channel=be16(f.data()+7);
-    if(d.have_master) {
-        const uint16_t delta=uint16_t(master-d.last_master);
-        if(delta>1 && delta<60000) { ++d.frame_gaps; d.missing_frames += delta-1; }
-    }
-    d.last_master=master; d.have_master=true;
-    if(d.have_channel[type]) {
-        const uint16_t delta=uint16_t(channel-d.last_channel[type]);
-        if(delta>1 && delta<60000) { ++d.frame_gaps; d.missing_frames += delta-1; }
-    }
-    d.last_channel[type]=channel; d.have_channel[type]=true;
-    if(!d.source) { d.source=f[9]; d.profile=d.source==0x30?"GGAK-E":(d.source==0x31||d.source==0x33?"GGAK-VE":"GGAK(未知)"); }
-    const uint8_t fill = d.source==0x30 ? 0xaa : 0x33;
-    const double t=frame_time(f,state); const uint8_t* p=f.data()+13;
-    if(type==0x70) for(size_t i=0;i<13;i++) { auto q=p+i*15; auto x=be16(q+2),y=be16(q+4),z=be16(q+6); if(x<=10000&&y<=10000&&z<=10000&&q[12]!=0xff) { d.mag[0].push_back(float(int(be16(q))-2339)*2.359f); d.mag[1].push_back(float(int(x)-2339)*2.359f); d.mag[2].push_back(float(int(y)-2339)*2.359f); d.mag[3].push_back(float(int(z)-2339)*2.359f); d.mag_voltage.push_back(float(be16(q+8))/125.0f); d.mag_time.push_back(t); } }
-    else if(type==0x40) for(size_t i=0;i<11;i++) { auto q=p+i*19; if((q[0]==0xa0||q[0]==0xa1)&&q[3]!=fill) { for(size_t ch=0;ch<8;ch++) d.particle[ch].push_back(float(be16(q+3+ch*2))); d.particle_time.push_back(t); } }
-    else if(type==0x20||type==0x30) { auto& out=type==0x20?d.esa_v:d.esa_g; auto& times=type==0x20?d.esa_v_time:d.esa_g_time; const uint8_t marker=type==0x20?0x90:0x98; for(size_t o=0;o<=138;o+=69) { auto q=p+o; bool all=true; for(size_t j=0;j<69;j++) all&=q[j]==fill; if(q[0]==marker&&!all) { EsaRow row{}; for(size_t b=0;b<32;b++) row[b]=int16_t(be16(q+3+b*2)); out.push_back(row); times.push_back(t); } } }
-    else if(type==0x50||type==0x5c) { size_t before=d.skl_spectral.size(); decode_spectral(p,PAYLOAD,type==0x50?0xa8:0xac,fill,d.skl_spectral,state.spectral_buffer); d.spectral_packets += d.skl_spectral.size()-before; d.spectral_time.insert(d.spectral_time.end(),d.skl_spectral.size()-before,t); }
-    else if(type==0x00||type==0x10||type==0x60) {
-        const uint8_t marker=type==0x10?0x88:0x80;
-        for(size_t i=0;i+12<=PAYLOAD;i+=12) {
-            auto q=p+i; bool all_fill=true; for(size_t j=0;j<12;j++) all_fill &= q[j]==fill;
-            if(q[0]!=marker || all_fill) continue;
-            auto& channels = type==0x00 ? d.housekeeping_a : (type==0x10 ? d.ser_channels : d.housekeeping_b);
-            for(size_t ch=0; ch<5; ++ch) channels[ch].push_back(float(be16(q+2+ch*2)));
-            const float v=float(be16(q+6))*(type==0x00?.0331f:1.0f);
-            if(type==0x00) d.tsi.push_back(v),d.tsi_time.push_back(t);
-            else if(type==0x10) d.ser.push_back(v),d.ser_time.push_back(t);
-            else ++d.housekeeping_b_count;
-        }
-    }
-    if(type!=0x00&&type!=0x10&&type!=0x60) { }
-    state.previous_coarse=be16(f.data()+10);
-}
-
-bool decode_file(const std::string& path, bool strict, Data& d, std::string& error) {
-    std::ifstream in(path, std::ios::binary); if(!in) { error="无法打开文件"; return false; }
-    std::array<uint8_t,FRAME> f{}; FrameDecodeState state;
-    while(in.read(reinterpret_cast<char*>(f.data()), FRAME)) {
-        if(state.previous_coarse>=0 && state.previous_coarse-int(be16(f.data()+10))>50000) state.coarse_offset+=65536;
-        decode_frame(f,strict,d,state);
-    }
-    if(d.total==0) { error="文件中没有完整 CADU 帧"; return false; } return true;
-}
 #ifdef _WIN32
 void on_pipe_event(nng_pipe, nng_pipe_ev event, void* context) {
     auto* tcp = static_cast<TcpSource*>(context);
