@@ -49,7 +49,7 @@ struct TcpSource {
     size_t last_size = 0;
     std::string host = "127.0.0.1";
     int port = 8888;
-    std::string status = "未连接";
+    std::string status = "Disconnected";
     ggak::FrameDecodeState decoder;
 } g_tcp;
 
@@ -59,8 +59,8 @@ bool start_tcp() {
     int result = nng_sub0_open_raw(&g_tcp.socket);
     if (!result) result = nng_dialer_create(&g_tcp.dialer, g_tcp.socket, url.c_str());
     if (!result) result = nng_dialer_start(g_tcp.dialer, NNG_FLAG_NONBLOCK);
-    if (result) { g_tcp.status = std::string("NNG 连接失败: ") + nng_strerror(result); return false; }
-    g_tcp.connected = true; g_tcp.status = "NNG 已启动，等待服务端"; g_tcp.decoder = {};
+    if (result) { g_tcp.status = std::string("NNG error: ") + nng_strerror(result); return false; }
+    g_tcp.connected = true; g_tcp.status = "NNG started, waiting for server"; g_tcp.decoder = {};
     return true;
 }
 
@@ -68,7 +68,7 @@ void stop_tcp() {
     if (g_tcp.connected) nng_close(g_tcp.socket);
     g_tcp.socket = nng_socket{NNG_SOCKET_INITIALIZER};
     g_tcp.dialer = nng_dialer{NNG_DIALER_INITIALIZER};
-    g_tcp.connected = false; g_tcp.status = "已断开";
+    g_tcp.connected = false; g_tcp.status = "Disconnected";
 }
 
 void poll_tcp() {
@@ -77,11 +77,11 @@ void poll_tcp() {
         void* raw = nullptr; size_t size = 0;
         const int result = nng_recv(g_tcp.socket, &raw, &size, NNG_FLAG_NONBLOCK | NNG_FLAG_ALLOC);
         if (result == NNG_EAGAIN) break;
-        if (result) { g_tcp.status = std::string("NNG 接收失败: ") + nng_strerror(result); stop_tcp(); return; }
+        if (result) { g_tcp.status = std::string("NNG receive error: ") + nng_strerror(result); stop_tcp(); return; }
         ++g_tcp.messages; g_tcp.last_size = size;
         const auto* bytes = static_cast<const uint8_t*>(raw);
         bool fill = size && std::all_of(bytes, bytes + size, [](uint8_t b) { return b == 0x33; });
-        if (fill) { ++g_tcp.idle_messages; nng_free(raw, size); continue; }
+        if (fill) { ++g_tcp.idle_messages; g_tcp.status = "Idle message (0x33)"; nng_free(raw, size); continue; }
         size_t cursor = 0, frames = 0;
         while (cursor + ggak::FRAME <= size) {
             size_t sync = cursor;
@@ -95,7 +95,7 @@ void poll_tcp() {
             ++g_tcp.decode_frames; ++frames; cursor = sync + ggak::FRAME;
         }
         if (!frames) ++g_tcp.bad_messages;
-        g_tcp.status = frames ? "收到 NNG message，提取 " + std::to_string(frames) + " 帧" : "未找到完整 CADU";
+        g_tcp.status = frames ? "NNG message: " + std::to_string(frames) + " CADU" : "No complete CADU";
         nng_free(raw, size);
     }
 }
@@ -350,8 +350,8 @@ void draw_ui() {
         }
     } else if (ImGui::Button("Disconnect NNG##tcp_disconnect", ImVec2(-1, 52.0f * g_ui_scale))) stop_tcp();
     ImGui::TextWrapped("%s", g_tcp.status.c_str());
-    ImGui::Text("消息: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
-    ImGui::Text("Idle: %llu  无完整帧: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
+    ImGui::Text("Messages: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
+    ImGui::Text("Idle: %llu  Bad: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
     ImGui::Spacing(); ImGui::TextUnformatted("状态"); ImGui::Separator();
     if (g_data.total) {
         ImGui::TextWrapped("配置: %s", g_data.profile.c_str());
@@ -360,7 +360,7 @@ void draw_ui() {
     } else {
         ImGui::TextDisabled("尚未加载 CADU 文件");
     }
-    ImGui::Spacing(); ImGui::TextUnformatted("数据类型"); ImGui::Separator();
+    ImGui::Spacing(); ImGui::TextUnformatted("Data types"); ImGui::Separator();
     ImGui::BulletText("FM-VE 磁场");
     ImGui::BulletText("GALS-VE 粒子");
     ImGui::BulletText("SKIF-VE/V ESA");
