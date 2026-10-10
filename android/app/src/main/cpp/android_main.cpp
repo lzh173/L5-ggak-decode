@@ -180,8 +180,10 @@ void load_font(android_app* app, ImGuiIO& io) {
             ranges.AddText("打开文件加载并解码解码器严格校验概览请选择尚未加载总帧通过失败"
                            "填充磁场点粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知"
                            "状态配置数据图表数据点仪器实时输入离线版当前结果个块估计丢帧计数器跳号"
-                           "TCP地址端口连接断开NNG消息Idle无完整帧收到提取服务端启动等待已手动"
-                           "失败保存网络调试校验有效数据默认HostPortConnectDisconnectStatus"
+                           "TCP地址端口连接断开NNG消息Idle空闲无完整帧收到提取服务端启动等待已手动"
+                           "失败保存网络调试校验有效数据默认数据类型连接中连接失败未连接"
+                           "图表缩放拖动滚轮平滑不平滑轻度中度强度复位有效点太阳能量谱"
+                           "总帧校验通过校验失败填充帧源编号数据点概览当前解码结果"
                            "MessagesCADUFramesResetZoomDragWheel");
             ranges.BuildRanges(&g_font_ranges);
             if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 20.0f * g_ui_scale, nullptr,
@@ -232,17 +234,8 @@ void plot_multi(const char* title, const char* id,
     struct View { float zx = 1.0f, zy = 1.0f, cx = .5f, cy = .5f; };
     static std::unordered_map<std::string, View> views;
     View& view = views[id];
-    ImGui::PushID(id);
-    ImGui::TextUnformatted(title);
-    ImGui::SameLine();
-    if (ImGui::Button("X+", ImVec2(52.0f * g_ui_scale, 40.0f * g_ui_scale))) view.zx = std::min(256.0f, view.zx * 1.5f);
-    ImGui::SameLine();
-    if (ImGui::Button("Y+", ImVec2(52.0f * g_ui_scale, 40.0f * g_ui_scale))) view.zy = std::min(256.0f, view.zy * 1.5f);
-    ImGui::SameLine();
-    if (ImGui::Button("复位", ImVec2(72.0f * g_ui_scale, 40.0f * g_ui_scale))) view = View{};
-    ImGui::SameLine();
-    ImGui::TextDisabled("拖动: XY  |  滚轮: XY");
-    ImGui::PopID();
+    static std::unordered_map<std::string, int> smooth_windows;
+    int& smooth_window = smooth_windows[id];
     if (chart_hovered) {
         const ImGuiIO& io = ImGui::GetIO();
         if (io.MouseWheel != 0.0f) {
@@ -268,6 +261,28 @@ void plot_multi(const char* title, const char* id,
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
     draw->AddText(ImVec2((min.x + max.x) * .5f - ImGui::CalcTextSize(title).x * .5f, min.y + 7), IM_COL32(240,240,240,255), title);
+    // Keep chart controls over the plot without consuming chart layout space.
+    ImGui::SetCursorScreenPos({std::max(min.x + 8.0f, max.x - 410.0f * g_ui_scale), min.y + 8.0f});
+    ImGui::PushID(id);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 22, 25, 220));
+    ImGui::BeginGroup();
+    if (ImGui::Button("X+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) view.zx = std::min(256.0f, view.zx * 1.5f);
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
+    if (ImGui::Button("Y+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) view.zy = std::min(256.0f, view.zy * 1.5f);
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
+    if (ImGui::Button("复位", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) view = View{};
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
+    const char* smooth_names[] = {"不平滑", "轻度平滑", "中度平滑", "强度平滑"};
+    if (ImGui::BeginCombo("##smooth", smooth_names[smooth_window], ImVec2(118.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        for (int i = 0; i < 4; ++i) {
+            if (ImGui::Selectable(smooth_names[i], smooth_window == i)) smooth_window = i;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndGroup();
+    ImGui::PopStyleColor();
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos({min.x, max.y});
     for (int i = 0; i <= 10; ++i) {
         const float x = left + width * i / 10.0f; draw->AddLine({x, top}, {x, bottom}, IM_COL32(55,57,60,180));
         char text[32]; std::snprintf(text, sizeof(text), "%zu", static_cast<size_t>(xs * count + (xe - xs) * count * i / 10.0f));
@@ -283,6 +298,7 @@ void plot_multi(const char* title, const char* id,
     for (size_t s = 0; s < series.size(); ++s) {
         if (!series[s]) continue;
         const auto& values = *series[s]; if (values.empty()) continue;
+        const size_t smoothing = smooth_window == 0 ? 1 : (smooth_window == 1 ? 3 : (smooth_window == 2 ? 5 : 9));
         const size_t first = std::min(values.size()-1, static_cast<size_t>(xs * (values.size()-1)));
         const size_t last = std::min(values.size()-1, static_cast<size_t>(xe * (values.size()-1)));
         const size_t point_count = last - first + 1;
@@ -292,10 +308,20 @@ void plot_multi(const char* title, const char* id,
         for (size_t column = 0; column < columns; ++column) {
             const size_t begin = std::min(last, first + column * point_count / columns);
             const size_t end = std::min(last + 1, std::max(begin + 1, first + (column + 1) * point_count / columns));
-            float column_lo = values[begin], column_hi = values[begin];
+            auto sample = [&](size_t index) {
+                if (smoothing == 1) return values[index];
+                const size_t half = smoothing / 2;
+                const size_t from = index > half ? index - half : 0;
+                const size_t to = std::min(values.size() - 1, index + half);
+                double sum = 0.0;
+                for (size_t j = from; j <= to; ++j) sum += values[j];
+                return static_cast<float>(sum / static_cast<double>(to - from + 1));
+            };
+            float column_lo = sample(begin), column_hi = column_lo;
             for (size_t i = begin + 1; i < end; ++i) {
-                column_lo = std::min(column_lo, values[i]);
-                column_hi = std::max(column_hi, values[i]);
+                const float value = sample(i);
+                column_lo = std::min(column_lo, value);
+                column_hi = std::max(column_hi, value);
             }
             const float ratio = point_count <= 1 ? 0.5f :
                 static_cast<float>(begin - first) / static_cast<float>(std::max<size_t>(1, point_count - 1));
@@ -310,7 +336,7 @@ void plot_multi(const char* title, const char* id,
     draw->PopClipRect();
     float legend_x = left;
     for (size_t i=0; i<series.size(); ++i) { draw->AddRectFilled({legend_x,bottom+25},{legend_x+14,bottom+28},ImGui::ColorConvertFloat4ToU32(colors[i])); draw->AddText({legend_x+19,bottom+20},IM_COL32(220,225,235,230),names[i]); legend_x += 28 + ImGui::CalcTextSize(names[i]).x; }
-    ImGui::TextDisabled("有效点: %zu   X x%.1f  Y x%.1f", count, view.zx, view.zy);
+    ImGui::TextDisabled("有效点: %zu   X x%.1f  Y x%.1f   平滑: %s", count, view.zx, view.zy, smooth_names[smooth_window]);
 }
 
 void plot(const char* title, const std::vector<float>& values) {
@@ -350,22 +376,18 @@ void draw_ui() {
         }
     } else if (ImGui::Button("Disconnect NNG##tcp_disconnect", ImVec2(-1, 52.0f * g_ui_scale))) stop_tcp();
     ImGui::TextWrapped("%s", g_tcp.status.c_str());
-    ImGui::Text("Messages: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
-    ImGui::Text("Idle: %llu  Bad: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
+    ImGui::Text("消息: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
+    ImGui::Text("空闲: %llu  异常: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
     ImGui::Spacing(); ImGui::TextUnformatted("状态"); ImGui::Separator();
     if (g_data.total) {
         ImGui::TextWrapped("配置: %s", g_data.profile.c_str());
-        ImGui::Text("Source ID: 0x%02X", g_data.source);
+        ImGui::Text("源编号: 0x%02X", g_data.source);
         ImGui::Text("总帧: %llu", static_cast<unsigned long long>(g_data.total));
     } else {
         ImGui::TextDisabled("尚未加载 CADU 文件");
     }
-    ImGui::Spacing(); ImGui::TextUnformatted("Data types"); ImGui::Separator();
-    ImGui::BulletText("FM-VE 磁场");
-    ImGui::BulletText("GALS-VE 粒子");
-    ImGui::BulletText("SKIF-VE/V ESA");
-    ImGui::BulletText("SKIF-VE/G ESA");
-    ImGui::BulletText("ISP-2M / SER");
+    ImGui::Spacing(); ImGui::TextUnformatted("主要数据"); ImGui::Separator();
+    ImGui::TextDisabled("详细数据和仪器图表请在右侧标签页查看");
     ImGui::EndChild();
     ImGui::SameLine();
 
@@ -374,7 +396,7 @@ void draw_ui() {
         if (ImGui::BeginTabItem("概览##overview_tab")) {
             if (!g_data.total) ImGui::TextDisabled("尚未加载 CADU 文件");
             else {
-                ImGui::Text("配置: %s    Source ID: 0x%02X", g_data.profile.c_str(), g_data.source);
+                ImGui::Text("配置: %s    源编号: 0x%02X", g_data.profile.c_str(), g_data.source);
                 ImGui::Spacing();
                 if (ImGui::BeginTable("metrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                                     ImGuiTableFlags_SizingStretchProp)) {
