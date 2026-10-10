@@ -288,22 +288,6 @@ void plot_multi(const char* title, const char* id,
     View& view = views[id];
     static std::unordered_map<std::string, int> smooth_windows;
     int& smooth_window = smooth_windows[id];
-    if (chart_hovered) {
-        const ImGuiIO& io = ImGui::GetIO();
-        if (io.MouseWheel != 0.0f) {
-            const float factor = io.MouseWheel > 0 ? 1.25f : .8f;
-            const float mx = std::clamp((io.MousePos.x - left) / width, 0.0f, 1.0f);
-            const float my = std::clamp((bottom - io.MousePos.y) / height, 0.0f, 1.0f);
-            const float ox = view.zx, oy = view.zy;
-            view.zx = std::clamp(view.zx * factor, 1.0f, 256.0f); view.zy = std::clamp(view.zy * factor, 1.0f, 256.0f);
-            view.cx += (mx - .5f) * (1.0f / ox - 1.0f / view.zx);
-            view.cy += (my - .5f) * (1.0f / oy - 1.0f / view.zy);
-        }
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
-            view.cx -= io.MouseDelta.x / width / view.zx; view.cy += io.MouseDelta.y / height / view.zy;
-        }
-        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) view = View{};
-    }
     const float hx = .5f / view.zx, hy = .5f / view.zy;
     view.cx = std::clamp(view.cx, hx, 1.0f - hx); view.cy = std::clamp(view.cy, hy, 1.0f - hy);
     const float xs = view.cx - hx, xe = view.cx + hx, ys = view.cy - hy, ye = view.cy + hy;
@@ -314,27 +298,64 @@ void plot_multi(const char* title, const char* id,
     draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
     draw->AddText(ImVec2((min.x + max.x) * .5f - ImGui::CalcTextSize(title).x * .5f, min.y + 7), IM_COL32(240,240,240,255), title);
     // Keep chart controls over the plot without consuming chart layout space.
-    ImGui::SetCursorScreenPos({std::max(min.x + 8.0f, max.x - 410.0f * g_ui_scale), min.y + 8.0f});
+    const ImVec2 toolbar_min(std::max(min.x + 8.0f, max.x - 410.0f * g_ui_scale), min.y + 8.0f);
+    ImGui::SetCursorScreenPos(toolbar_min);
     ImGui::PushID(id);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 22, 25, 220));
     ImGui::BeginGroup();
-    if (ImGui::Button("X+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) view.zx = std::min(256.0f, view.zx * 1.5f);
+    bool toolbar_activated = false;
+    if (ImGui::Button("X+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        view.zx = std::min(256.0f, view.zx * 1.5f);
+        toolbar_activated = true;
+    }
     ImGui::SameLine(0, 5.0f * g_ui_scale);
-    if (ImGui::Button("Y+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) view.zy = std::min(256.0f, view.zy * 1.5f);
+    if (ImGui::Button("Y+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        view.zy = std::min(256.0f, view.zy * 1.5f);
+        toolbar_activated = true;
+    }
     ImGui::SameLine(0, 5.0f * g_ui_scale);
-    if (ImGui::Button("复位", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) view = View{};
+    if (ImGui::Button("复位", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        view = View{};
+        toolbar_activated = true;
+    }
     ImGui::SameLine(0, 5.0f * g_ui_scale);
     const char* smooth_names[] = {"不平滑", "轻度平滑", "中度平滑", "强度平滑"};
     ImGui::SetNextItemWidth(118.0f * g_ui_scale);
     if (ImGui::BeginCombo("##smooth", smooth_names[smooth_window])) {
         for (int i = 0; i < 4; ++i) {
-            if (ImGui::Selectable(smooth_names[i], smooth_window == i)) smooth_window = i;
+            if (ImGui::Selectable(smooth_names[i], smooth_window == i)) {
+                smooth_window = i;
+                toolbar_activated = true;
+            }
         }
         ImGui::EndCombo();
     }
     ImGui::EndGroup();
     ImGui::PopStyleColor();
     ImGui::PopID();
+    const ImVec2 toolbar_max(toolbar_min.x + 319.0f * g_ui_scale,
+                             toolbar_min.y + 44.0f * g_ui_scale);
+    const bool toolbar_hovered = ImGui::IsMouseHoveringRect(toolbar_min, toolbar_max, true);
+    // The chart's invisible hit area is deliberately behind the toolbar. A
+    // touch that starts on a control must never become a chart drag or reset.
+    if (chart_hovered && !toolbar_hovered && !toolbar_activated) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.MouseWheel != 0.0f) {
+            const float factor = io.MouseWheel > 0 ? 1.25f : .8f;
+            const float mx = std::clamp((io.MousePos.x - left) / width, 0.0f, 1.0f);
+            const float my = std::clamp((bottom - io.MousePos.y) / height, 0.0f, 1.0f);
+            const float ox = view.zx, oy = view.zy;
+            view.zx = std::clamp(view.zx * factor, 1.0f, 256.0f);
+            view.zy = std::clamp(view.zy * factor, 1.0f, 256.0f);
+            view.cx += (mx - .5f) * (1.0f / ox - 1.0f / view.zx);
+            view.cy += (my - .5f) * (1.0f / oy - 1.0f / view.zy);
+        }
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+            view.cx -= io.MouseDelta.x / width / view.zx;
+            view.cy += io.MouseDelta.y / height / view.zy;
+        }
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) view = View{};
+    }
     ImGui::SetCursorScreenPos({min.x, max.y});
     for (int i = 0; i <= 10; ++i) {
         const float x = left + width * i / 10.0f; draw->AddLine({x, top}, {x, bottom}, IM_COL32(55,57,60,180));
