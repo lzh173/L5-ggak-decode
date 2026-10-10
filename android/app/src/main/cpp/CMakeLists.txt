@@ -8,6 +8,16 @@ FetchContent_Declare(imgui
     GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(imgui)
 
+set(NNG_ENABLE_NNGCAT OFF CACHE BOOL "" FORCE)
+set(NNG_ENABLE_TLS OFF CACHE BOOL "" FORCE)
+set(NNG_ENABLE_HTTP OFF CACHE BOOL "" FORCE)
+set(NNG_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(nng
+    GIT_REPOSITORY https://github.com/nanomsg/nng.git
+    GIT_TAG v1.8.0
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(nng)
+
 set(APP_GLUE ${ANDROID_NDK}/sources/android/native_app_glue)
 add_library(ggak_android SHARED
     android_main.cpp
@@ -30,4 +40,5 @@ target_link_options(ggak_android PRIVATE
     -u ANativeActivity_onCreate
     "LINKER:-z,max-page-size=16384"
     "LINKER:-z,common-page-size=16384")
-target_link_libraries(ggak_android PRIVATE android log EGL GLESv3)
+target_include_directories(ggak_android PRIVATE ${nng_SOURCE_DIR}/include)
+target_link_libraries(ggak_android PRIVATE android log EGL GLESv3 nng)

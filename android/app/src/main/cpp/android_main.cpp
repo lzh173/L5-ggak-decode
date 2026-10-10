@@ -16,9 +16,19 @@
 #include <mutex>
 #include <string>
 #include <unistd.h>
+#include <nng/nng.h>
+#include <nng/protocol/pubsub0/sub.h>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <deque>
+#include <sstream>
+#include <unordered_map>
+#include <cstdio>
 
 namespace {
 constexpr const char* LOG_TAG = "GGAKDecoder";
+constexpr std::array<uint8_t, 4> CADU_ASM = {0x1a, 0xcf, 0xfc, 0x1d};
 android_app* g_app = nullptr;
 EGLDisplay g_display = EGL_NO_DISPLAY;
 EGLSurface g_surface = EGL_NO_SURFACE;
@@ -30,6 +40,65 @@ std::string g_status = "请选择 CADU 文件";
 bool g_strict = false;
 ImVector<ImWchar> g_font_ranges;
 float g_ui_scale = 1.0f;
+
+struct TcpSource {
+    nng_socket socket{NNG_SOCKET_INITIALIZER};
+    nng_dialer dialer{NNG_DIALER_INITIALIZER};
+    bool connected = false;
+    uint64_t messages = 0, decode_frames = 0, idle_messages = 0, bad_messages = 0;
+    size_t last_size = 0;
+    std::string host = "127.0.0.1";
+    int port = 8888;
+    std::string status = "未连接";
+    ggak::FrameDecodeState decoder;
+} g_tcp;
+
+bool start_tcp() {
+    if (g_tcp.connected) return true;
+    const std::string url = "tcp://" + g_tcp.host + ":" + std::to_string(g_tcp.port);
+    int result = nng_sub0_open_raw(&g_tcp.socket);
+    if (!result) result = nng_dialer_create(&g_tcp.dialer, g_tcp.socket, url.c_str());
+    if (!result) result = nng_dialer_start(g_tcp.dialer, NNG_FLAG_NONBLOCK);
+    if (result) { g_tcp.status = std::string("NNG 连接失败: ") + nng_strerror(result); return false; }
+    g_tcp.connected = true; g_tcp.status = "NNG 已启动，等待服务端"; g_tcp.decoder = {};
+    return true;
+}
+
+void stop_tcp() {
+    if (g_tcp.connected) nng_close(g_tcp.socket);
+    g_tcp.socket = nng_socket{NNG_SOCKET_INITIALIZER};
+    g_tcp.dialer = nng_dialer{NNG_DIALER_INITIALIZER};
+    g_tcp.connected = false; g_tcp.status = "已断开";
+}
+
+void poll_tcp() {
+    if (!g_tcp.connected) return;
+    for (;;) {
+        void* raw = nullptr; size_t size = 0;
+        const int result = nng_recv(g_tcp.socket, &raw, &size, NNG_FLAG_NONBLOCK | NNG_FLAG_ALLOC);
+        if (result == NNG_EAGAIN) break;
+        if (result) { g_tcp.status = std::string("NNG 接收失败: ") + nng_strerror(result); stop_tcp(); return; }
+        ++g_tcp.messages; g_tcp.last_size = size;
+        const auto* bytes = static_cast<const uint8_t*>(raw);
+        bool fill = size && std::all_of(bytes, bytes + size, [](uint8_t b) { return b == 0x33; });
+        if (fill) { ++g_tcp.idle_messages; nng_free(raw, size); continue; }
+        size_t cursor = 0, frames = 0;
+        while (cursor + ggak::FRAME <= size) {
+            size_t sync = cursor;
+            while (sync + CADU_ASM.size() <= size && !std::equal(CADU_ASM.begin(), CADU_ASM.end(), bytes + sync)) ++sync;
+            if (sync + ggak::FRAME > size) break;
+            std::array<uint8_t, ggak::FRAME> frame{};
+            std::copy_n(bytes + sync, ggak::FRAME, frame.begin());
+            if (g_tcp.decoder.previous_coarse >= 0 && g_tcp.decoder.previous_coarse - int(ggak::be16(frame.data() + 10)) > 50000)
+                g_tcp.decoder.coarse_offset += 65536;
+            ggak::decode_frame(frame, g_strict, g_data, g_tcp.decoder);
+            ++g_tcp.decode_frames; ++frames; cursor = sync + ggak::FRAME;
+        }
+        if (!frames) ++g_tcp.bad_messages;
+        g_tcp.status = frames ? "收到 NNG message，提取 " + std::to_string(frames) + " 帧" : "未找到完整 CADU";
+        nng_free(raw, size);
+    }
+}
 
 void log_error(const char* message) {
     __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "%s (EGL error 0x%04x)", message, eglGetError());
@@ -144,15 +213,84 @@ void metric(const char* label, uint64_t value) {
     ImGui::Text("%llu", static_cast<unsigned long long>(value));
 }
 
+void plot_multi(const char* title, const char* id,
+                const std::vector<std::vector<float>>& series,
+                const std::vector<ImVec4>& colors,
+                const std::vector<const char*>& names) {
+    size_t count = 0; for (const auto& values : series) count = std::max(count, values.size());
+    if (!count) { ImGui::TextDisabled("无数据"); return; }
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const ImVec2 size(std::max(240.0f, avail.x), std::max(260.0f, avail.y - 8.0f));
+    ImGui::InvisibleButton(id, size);
+    const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    const float left = min.x + 52.0f, right = max.x - 10.0f, top = min.y + 30.0f;
+    const float bottom = max.y - 48.0f, width = std::max(1.0f, right - left), height = std::max(1.0f, bottom - top);
+    struct View { float zx = 1.0f, zy = 1.0f, cx = .5f, cy = .5f; };
+    static std::unordered_map<std::string, View> views;
+    View& view = views[id];
+    if (ImGui::IsItemHovered()) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.MouseWheel != 0.0f) {
+            const float factor = io.MouseWheel > 0 ? 1.25f : .8f;
+            const float mx = std::clamp((io.MousePos.x - left) / width, 0.0f, 1.0f);
+            const float my = std::clamp((bottom - io.MousePos.y) / height, 0.0f, 1.0f);
+            const float ox = view.zx, oy = view.zy;
+            view.zx = std::clamp(view.zx * factor, 1.0f, 256.0f); view.zy = std::clamp(view.zy * factor, 1.0f, 256.0f);
+            view.cx += (mx - .5f) * (1.0f / ox - 1.0f / view.zx);
+            view.cy += (my - .5f) * (1.0f / oy - 1.0f / view.zy);
+        }
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+            view.cx -= io.MouseDelta.x / width / view.zx; view.cy += io.MouseDelta.y / height / view.zy;
+        }
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) view = View{};
+    }
+    const float hx = .5f / view.zx, hy = .5f / view.zy;
+    view.cx = std::clamp(view.cx, hx, 1.0f - hx); view.cy = std::clamp(view.cy, hy, 1.0f - hy);
+    const float xs = view.cx - hx, xe = view.cx + hx, ys = view.cy - hy, ye = view.cy + hy;
+    float lo = FLT_MAX, hi = -FLT_MAX;
+    for (const auto& values : series) for (float value : values) { lo = std::min(lo, value); hi = std::max(hi, value); }
+    if (hi <= lo) hi = lo + 1.0f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
+    draw->AddText(ImVec2((min.x + max.x) * .5f - ImGui::CalcTextSize(title).x * .5f, min.y + 7), IM_COL32(240,240,240,255), title);
+    for (int i = 0; i <= 10; ++i) {
+        const float x = left + width * i / 10.0f; draw->AddLine({x, top}, {x, bottom}, IM_COL32(55,57,60,180));
+        char text[32]; std::snprintf(text, sizeof(text), "%zu", static_cast<size_t>(xs * count + (xe - xs) * count * i / 10.0f));
+        draw->AddText({x - 10, bottom + 6}, IM_COL32(220,220,220,255), text);
+    }
+    for (int i = 0; i <= 6; ++i) {
+        const float y = bottom - height * i / 6.0f; draw->AddLine({left,y},{right,y},IM_COL32(55,57,60,180));
+        char text[32]; std::snprintf(text, sizeof(text), "%.3g", lo + (hi-lo)*(ys+(ye-ys)*i/6.0f));
+        draw->AddText({min.x + 5, y - 8}, IM_COL32(220,220,220,255), text);
+    }
+    draw->PushClipRect({left,top},{right,bottom},true);
+    const size_t columns = std::max<size_t>(2, static_cast<size_t>(width));
+    for (size_t s = 0; s < series.size(); ++s) {
+        const auto& values = series[s]; if (values.empty()) continue;
+        const size_t first = std::min(values.size()-1, static_cast<size_t>(xs * (values.size()-1)));
+        const size_t last = std::min(values.size()-1, static_cast<size_t>(xe * (values.size()-1)));
+        const size_t step = std::max<size_t>(1, (last - first + 1) / columns);
+        ImVec2 previous{}; bool have = false;
+        for (size_t i = first; i <= last; i += step) {
+            const float ratio = static_cast<float>(i) / std::max<size_t>(1, values.size()-1);
+            const float x = left + width * (ratio-xs) / std::max(.0001f, xe-xs);
+            const float y = bottom - height * ((values[i]-lo)/(hi-lo)-ys) / std::max(.0001f, ye-ys);
+            ImVec2 point{x,y}; if (have) draw->AddLine(previous, point, ImGui::ColorConvertFloat4ToU32(colors[s]), 1.6f); previous=point; have=true;
+            if (i + step < i) break;
+        }
+    }
+    draw->PopClipRect();
+    float legend_x = left;
+    for (size_t i=0; i<series.size(); ++i) { draw->AddRectFilled({legend_x,bottom+25},{legend_x+14,bottom+28},ImGui::ColorConvertFloat4ToU32(colors[i])); draw->AddText({legend_x+19,bottom+20},IM_COL32(220,225,235,230),names[i]); legend_x += 28 + ImGui::CalcTextSize(names[i]).x; }
+    ImGui::TextDisabled("有效点: %zu   X x%.1f  Y x%.1f", count, view.zx, view.zy);
+}
+
 void plot(const char* title, const std::vector<float>& values) {
-    ImGui::TextUnformatted(title);
-    if (values.empty()) { ImGui::TextDisabled("无数据"); return; }
-    const ImVec2 available = ImGui::GetContentRegionAvail();
-    ImGui::PlotLines("##plot", values.data(), int(values.size()), 0, nullptr, 0.0f, FLT_MAX,
-                     ImVec2(std::max(240.0f, available.x), std::max(220.0f, available.y - 8.0f)));
+    plot_multi(title, "##plot", {values}, {ImVec4(.25f,.8f,1,1)}, {"data"});
 }
 
 void draw_ui() {
+    poll_tcp();
     std::string path, name;
     { std::lock_guard<std::mutex> lock(g_file_mutex); path.swap(g_pending_path); name.swap(g_pending_name); }
     if (!name.empty()) {
@@ -171,6 +309,19 @@ void draw_ui() {
     ImGui::TextWrapped("%s", g_status.c_str());
     if (ImGui::Button("打开文件...##open_file", ImVec2(-1, 48.0f * g_ui_scale))) open_picker();
     ImGui::Checkbox("严格校验##strict", &g_strict);
+    ImGui::Spacing(); ImGui::TextUnformatted("TCP 实时"); ImGui::Separator();
+    static char host[64] = "127.0.0.1";
+    static int port = 8888;
+    ImGui::InputText("地址##tcp_host", host, sizeof(host));
+    ImGui::InputInt("端口##tcp_port", &port);
+    if (!g_tcp.connected) {
+        if (ImGui::Button("连接 NNG##tcp_connect", ImVec2(-1, 48.0f * g_ui_scale))) {
+            g_tcp.host = host; g_tcp.port = std::clamp(port, 1, 65535); start_tcp();
+        }
+    } else if (ImGui::Button("断开 NNG##tcp_disconnect", ImVec2(-1, 48.0f * g_ui_scale))) stop_tcp();
+    ImGui::TextWrapped("%s", g_tcp.status.c_str());
+    ImGui::Text("消息: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
+    ImGui::Text("Idle: %llu  无完整帧: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
     ImGui::Spacing(); ImGui::TextUnformatted("状态"); ImGui::Separator();
     if (g_data.total) {
         ImGui::TextWrapped("配置: %s", g_data.profile.c_str());
@@ -216,8 +367,8 @@ void draw_ui() {
         if (ImGui::BeginTabItem("图表##charts_tab")) {
             if (!g_data.total) ImGui::TextDisabled("尚未加载 CADU 文件");
             else if (ImGui::BeginTabBar("instrument_tabs")) {
-                if (ImGui::BeginTabItem("FM-VE 磁场")) { plot("磁场 |B|", g_data.mag[0]); ImGui::EndTabItem(); }
-                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot("粒子计数", g_data.particle[0]); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("FM-VE 磁场")) { plot_multi("FM-VE 磁场", "##plot_mag", {g_data.mag[0],g_data.mag[1],g_data.mag[2],g_data.mag[3],g_data.mag_voltage}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1)}, {"X","Y","Z","B","V"}); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot_multi("GALS-VE 粒子计数", "##plot_particle", {g_data.particle[0],g_data.particle[1],g_data.particle[2],g_data.particle[3],g_data.particle[4],g_data.particle[5],g_data.particle[6],g_data.particle[7]}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1),ImVec4(.4f,1,.9f,1),ImVec4(1,.4f,.8f,1),ImVec4(.7f,.8f,1,1)}, {"CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8"}); ImGui::EndTabItem(); }
                 if (ImGui::BeginTabItem("ISP-2M")) { plot("太阳总辐照度", g_data.tsi); ImGui::EndTabItem(); }
                 if (ImGui::BeginTabItem("SER")) { plot("SKIF-VE SER", g_data.ser); ImGui::EndTabItem(); }
                 ImGui::EndTabBar();
