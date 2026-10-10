@@ -270,7 +270,7 @@ void metric(const char* label, uint64_t value) {
 void plot_multi(const char* title, const char* id,
                 const std::vector<const std::vector<float>*>& series,
                 const std::vector<ImVec4>& colors,
-                const std::vector<const char*>& names) {
+                const std::vector<const char*>& names, bool log_scale = false) {
     size_t count = 0; for (const auto* values : series) if (values) count = std::max(count, values->size());
     if (!count) { ImGui::TextDisabled("无数据"); return; }
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -292,7 +292,10 @@ void plot_multi(const char* title, const char* id,
     view.cx = std::clamp(view.cx, hx, 1.0f - hx); view.cy = std::clamp(view.cy, hy, 1.0f - hy);
     const float xs = view.cx - hx, xe = view.cx + hx, ys = view.cy - hy, ye = view.cy + hy;
     float lo = FLT_MAX, hi = -FLT_MAX;
-    for (const auto* values : series) if (values) for (float value : *values) { lo = std::min(lo, value); hi = std::max(hi, value); }
+    for (const auto* values : series) if (values) for (float value : *values) {
+        if (log_scale) value = std::log10(std::max(1.0f, value));
+        lo = std::min(lo, value); hi = std::max(hi, value);
+    }
     if (hi <= lo) hi = lo + 1.0f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
@@ -441,12 +444,12 @@ void plot_multi(const char* title, const char* id,
             const size_t begin = std::min(last, first + column * point_count / columns);
             const size_t end = std::min(last + 1, std::max(begin + 1, first + (column + 1) * point_count / columns));
             auto sample = [&](size_t index) {
-                if (smoothing == 1) return values[index];
+                if (smoothing == 1) return log_scale ? std::log10(std::max(1.0f, values[index])) : values[index];
                 const size_t half = smoothing / 2;
                 const size_t from = index > half ? index - half : 0;
                 const size_t to = std::min(values.size() - 1, index + half);
                 double sum = 0.0;
-                for (size_t j = from; j <= to; ++j) sum += values[j];
+                for (size_t j = from; j <= to; ++j) sum += log_scale ? std::log10(std::max(1.0f, values[j])) : values[j];
                 return static_cast<float>(sum / static_cast<double>(to - from + 1));
             };
             float column_lo = sample(begin), column_hi = column_lo;
@@ -473,6 +476,48 @@ void plot_multi(const char* title, const char* id,
 
 void plot(const char* title, const std::vector<float>& values) {
     plot_multi(title, "##plot", {&values}, {ImVec4(.25f,.8f,1,1)}, {"data"});
+}
+
+void heatmap(const char* title, const char* id, const std::vector<ggak::EsaRow>& rows) {
+    ImGui::TextUnformatted(title);
+    if (rows.empty()) { ImGui::TextDisabled("无数据"); return; }
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const ImVec2 size(std::max(240.0f, avail.x), std::max(260.0f, avail.y - 8.0f));
+    ImGui::InvisibleButton(id, size);
+    const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(min, max, IM_COL32(18, 30, 48, 255));
+    draw->AddRect(min, max, IM_COL32(70, 90, 120, 255));
+    int lo = rows.front()[0], hi = lo;
+    for (const auto& row : rows) for (int16_t value : row) { lo = std::min(lo, int(value)); hi = std::max(hi, int(value)); }
+    if (hi == lo) ++hi;
+    const float cell_w = std::max(1.0f, (max.x - min.x - 12.0f) / float(ggak::ESA_BINS));
+    const float cell_h = std::max(1.0f, (max.y - min.y - 24.0f) / float(rows.size()));
+    for (size_t r = 0; r < rows.size(); ++r) for (size_t c = 0; c < ggak::ESA_BINS; ++c) {
+        const float ratio = float(int(rows[r][c]) - lo) / float(hi - lo);
+        const ImU32 color = ImColor::HSV(.66f - .66f * std::clamp(ratio, 0.0f, 1.0f), .85f,
+                                         .25f + .75f * ratio);
+        const ImVec2 a(min.x + 6.0f + c * cell_w, min.y + 6.0f + r * cell_h);
+        draw->AddRectFilled(a, {a.x + cell_w + .5f, a.y + cell_h + .5f}, color);
+    }
+    char range[96]; std::snprintf(range, sizeof(range), "min %d  max %d  包 %zu", lo, hi, rows.size());
+    draw->AddText({min.x + 8.0f, min.y + 5.0f}, IM_COL32(235,240,250,230), range);
+}
+
+void plot_spectral(const std::vector<std::vector<float>>& packets) {
+    std::array<std::vector<float>, 8> channels;
+    for (const auto& packet : packets)
+        for (size_t i = 0; i < std::min<size_t>(channels.size(), packet.size()); ++i)
+            channels[i].push_back(packet[i]);
+    std::vector<const std::vector<float>*> series;
+    std::vector<ImVec4> colors;
+    std::vector<const char*> names;
+    static const std::array<const char*, 8> labels = {"CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8"};
+    static const std::array<ImVec4, 8> palette = {ImVec4(1,.55f,.25f,1),ImVec4(.2f,.75f,1,1),ImVec4(.3f,1,.45f,1),ImVec4(1,.35f,.45f,1),ImVec4(.8f,.5f,1,1),ImVec4(1,.85f,.3f,1),ImVec4(.5f,1,.8f,1),ImVec4(1,.6f,.7f,1)};
+    for (size_t i = 0; i < channels.size(); ++i) if (!channels[i].empty()) {
+        series.push_back(&channels[i]); colors.push_back(palette[i]); names.push_back(labels[i]);
+    }
+    plot_multi("SKL-E 光谱", "##plot_skl_spectral", series, colors, names);
 }
 
 void draw_ui() {
@@ -564,9 +609,22 @@ void draw_ui() {
             if (!g_data.total) ImGui::TextDisabled("尚未加载 CADU 文件");
             else if (ImGui::BeginTabBar("instrument_tabs")) {
                 if (ImGui::BeginTabItem("FM-VE 磁场")) { plot_multi("FM-VE 磁场", "##plot_mag", {&g_data.mag[0],&g_data.mag[1],&g_data.mag[2],&g_data.mag[3],&g_data.mag_voltage}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1)}, {"X","Y","Z","B","V"}); ImGui::EndTabItem(); }
-                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot_multi("GALS-VE 粒子计数", "##plot_particle", {&g_data.particle[0],&g_data.particle[1],&g_data.particle[2],&g_data.particle[3],&g_data.particle[4],&g_data.particle[5],&g_data.particle[6],&g_data.particle[7]}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1),ImVec4(.4f,1,.9f,1),ImVec4(1,.4f,.8f,1),ImVec4(.7f,.8f,1,1)}, {"CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8"}); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot_multi("GALS-VE 粒子计数", "##plot_particle", {&g_data.particle[0],&g_data.particle[1],&g_data.particle[2],&g_data.particle[3],&g_data.particle[4],&g_data.particle[5],&g_data.particle[6],&g_data.particle[7]}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1),ImVec4(.4f,1,.9f,1),ImVec4(1,.4f,.8f,1),ImVec4(.7f,.8f,1,1)}, {"CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8"}, true); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("SKIF-VE/V")) { heatmap("SKIF-VE/V ESA 能谱", "##heatmap_esa_v", g_data.esa_v); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("SKIF-VE/G")) { heatmap("SKIF-VE/G ESA 能谱", "##heatmap_esa_g", g_data.esa_g); ImGui::EndTabItem(); }
                 if (ImGui::BeginTabItem("ISP-2M")) { plot("太阳总辐照度", g_data.tsi); ImGui::EndTabItem(); }
                 if (ImGui::BeginTabItem("SER")) { plot("SKIF-VE SER", g_data.ser); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("Housekeeping")) {
+                    plot_multi("Housekeeping-A", "##plot_hk_a", {&g_data.housekeeping_a[0],&g_data.housekeeping_a[1],&g_data.housekeeping_a[2],&g_data.housekeeping_a[3],&g_data.housekeeping_a[4]}, {ImVec4(1,.55f,.25f,1),ImVec4(.2f,.75f,1,1),ImVec4(.3f,1,.45f,1),ImVec4(1,.35f,.45f,1),ImVec4(.8f,.5f,1,1)}, {"CH1","CH2","CH3","CH4","CH5"});
+                    ImGui::Separator();
+                    plot_multi("Housekeeping-B / N2", "##plot_hk_b", {&g_data.housekeeping_b[0],&g_data.housekeeping_b[1],&g_data.housekeeping_b[2],&g_data.housekeeping_b[3],&g_data.housekeeping_b[4]}, {ImVec4(1,.55f,.25f,1),ImVec4(.2f,.75f,1,1),ImVec4(.3f,1,.45f,1),ImVec4(1,.35f,.45f,1),ImVec4(.8f,.5f,1,1)}, {"CH1","CH2","CH3","CH4","CH5"});
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("SKL-E")) {
+                    if (g_data.skl_spectral.empty()) ImGui::TextDisabled("暂无 SKL-E 光谱包");
+                    else plot_spectral(g_data.skl_spectral);
+                    ImGui::EndTabItem();
+                }
                 ImGui::EndTabBar();
             }
             ImGui::EndTabItem();
