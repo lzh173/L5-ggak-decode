@@ -298,10 +298,13 @@ void plot_multi(const char* title, const char* id,
     }
     if (hi <= lo) hi = lo + 1.0f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->ChannelsSplit(2);
+    draw->ChannelsSetCurrent(0);
     draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
     draw->AddText(ImVec2((min.x + max.x) * .5f - ImGui::CalcTextSize(title).x * .5f, min.y + 7), IM_COL32(240,240,240,255), title);
     // Keep chart controls over the plot without consuming chart layout space.
     const ImVec2 toolbar_min(min.x + 8.0f, min.y + 8.0f);
+    draw->ChannelsSetCurrent(1);
     ImGui::SetCursorScreenPos(toolbar_min);
     ImGui::PushID(id);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 22, 25, 220));
@@ -363,6 +366,7 @@ void plot_multi(const char* title, const char* id,
     ImGui::EndGroup();
     ImGui::PopStyleColor();
     ImGui::PopID();
+    draw->ChannelsSetCurrent(0);
     const ImVec2 toolbar_max(toolbar_min.x + 300.0f * g_ui_scale,
                              toolbar_min.y + 144.0f * g_ui_scale);
     const ImGuiIO& io = ImGui::GetIO();
@@ -471,6 +475,9 @@ void plot_multi(const char* title, const char* id,
     draw->PopClipRect();
     float legend_x = left;
     for (size_t i=0; i<series.size(); ++i) { draw->AddRectFilled({legend_x,bottom+25},{legend_x+14,bottom+28},ImGui::ColorConvertFloat4ToU32(colors[i])); draw->AddText({legend_x+19,bottom+20},IM_COL32(220,225,235,230),names[i]); legend_x += 28 + ImGui::CalcTextSize(names[i]).x; }
+    draw->ChannelsMerge();
+    // Leave the draw list on its default channel for the next ImGui item.
+    draw->ChannelsSetCurrent(0);
     ImGui::TextDisabled("有效点: %zu   X x%.1f  Y x%.1f   平滑: %s", count, view.zx, view.zy, smooth_names[smooth_window]);
 }
 
