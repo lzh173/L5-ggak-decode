@@ -122,7 +122,8 @@ void poll_tcp() {
         bool fill = size && std::all_of(bytes, bytes + size, [](uint8_t b) { return b == 0x33; });
         if (fill) { ++g_tcp.idle_messages; g_tcp.status = "收到 0x33 空闲消息"; nng_free(raw, size); continue; }
         ++g_tcp.valid_messages;
-        g_tcp.sync_words += count_asm(bytes, size);
+        const size_t message_asm = count_asm(bytes, size);
+        g_tcp.sync_words += message_asm;
         size_t cursor = 0, frames = 0;
         while (cursor + ggak::FRAME <= size) {
             size_t sync = cursor;
@@ -142,7 +143,7 @@ void poll_tcp() {
         }
         if (!frames) ++g_tcp.bad_messages;
         g_tcp.status = frames ? "收到 NNG 消息，提取 " + std::to_string(frames) + " 帧" :
-                                (g_tcp.sync_words ? "找到 ASM，但没有完整 CADU" : "未找到 CADU ASM");
+                                (message_asm ? "找到 ASM，但没有完整 CADU" : "未找到 CADU ASM");
         nng_free(raw, size);
     }
 }
