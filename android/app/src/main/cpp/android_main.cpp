@@ -298,32 +298,48 @@ void plot_multi(const char* title, const char* id,
     draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
     draw->AddText(ImVec2((min.x + max.x) * .5f - ImGui::CalcTextSize(title).x * .5f, min.y + 7), IM_COL32(240,240,240,255), title);
     // Keep chart controls over the plot without consuming chart layout space.
-    const ImVec2 toolbar_min(std::max(min.x + 8.0f, max.x - 410.0f * g_ui_scale), min.y + 8.0f);
+    const ImVec2 toolbar_min(min.x + 8.0f, min.y + 8.0f);
     ImGui::SetCursorScreenPos(toolbar_min);
     ImGui::PushID(id);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 22, 25, 220));
     ImGui::BeginGroup();
     bool toolbar_activated = false;
-    ImVec2 x_min{}, x_max{}, y_min{}, y_max{}, reset_min{}, reset_max{};
+    ImVec2 x_min{}, x_max{}, x_minus_min{}, x_minus_max{};
+    ImVec2 y_min{}, y_max{}, y_minus_min{}, y_minus_max{};
+    ImVec2 reset_min{}, reset_max{}, smooth_min{}, smooth_max{};
     if (ImGui::Button("X+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view.zx = std::min(256.0f, view.zx * 1.5f);
         toolbar_activated = true;
     }
     x_min = ImGui::GetItemRectMin(); x_max = ImGui::GetItemRectMax();
     ImGui::SameLine(0, 5.0f * g_ui_scale);
+    if (ImGui::Button("X-", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        view.zx = std::max(1.0f, view.zx / 1.5f);
+        toolbar_activated = true;
+    }
+    x_minus_min = ImGui::GetItemRectMin(); x_minus_max = ImGui::GetItemRectMax();
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
+    ImGui::NewLine();
     if (ImGui::Button("Y+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view.zy = std::min(256.0f, view.zy * 1.5f);
         toolbar_activated = true;
     }
     y_min = ImGui::GetItemRectMin(); y_max = ImGui::GetItemRectMax();
     ImGui::SameLine(0, 5.0f * g_ui_scale);
+    if (ImGui::Button("Y-", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        view.zy = std::max(1.0f, view.zy / 1.5f);
+        toolbar_activated = true;
+    }
+    y_minus_min = ImGui::GetItemRectMin(); y_minus_max = ImGui::GetItemRectMax();
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
+    ImGui::NewLine();
     if (ImGui::Button("复位", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view = View{};
         toolbar_activated = true;
     }
     reset_min = ImGui::GetItemRectMin(); reset_max = ImGui::GetItemRectMax();
-    ImGui::SameLine(0, 5.0f * g_ui_scale);
     const char* smooth_names[] = {"不平滑", "轻度平滑", "中度平滑", "强度平滑"};
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
     ImGui::SetNextItemWidth(118.0f * g_ui_scale);
     if (ImGui::BeginCombo("##smooth", smooth_names[smooth_window])) {
         for (int i = 0; i < 4; ++i) {
@@ -334,11 +350,12 @@ void plot_multi(const char* title, const char* id,
         }
         ImGui::EndCombo();
     }
+    smooth_min = ImGui::GetItemRectMin(); smooth_max = ImGui::GetItemRectMax();
     ImGui::EndGroup();
     ImGui::PopStyleColor();
     ImGui::PopID();
-    const ImVec2 toolbar_max(toolbar_min.x + 319.0f * g_ui_scale,
-                             toolbar_min.y + 44.0f * g_ui_scale);
+    const ImVec2 toolbar_max(toolbar_min.x + 210.0f * g_ui_scale,
+                             toolbar_min.y + 144.0f * g_ui_scale);
     const ImGuiIO& io = ImGui::GetIO();
     const bool toolbar_hovered = ImGui::IsMouseHoveringRect(toolbar_min, toolbar_max, true);
     // Android's touch backend can leave the chart InvisibleButton as the
@@ -351,14 +368,27 @@ void plot_multi(const char* title, const char* id,
         } else if (ImGui::IsMouseHoveringRect(y_min, y_max, true)) {
             view.zy = std::min(256.0f, view.zy * 1.5f);
             toolbar_activated = true;
+        } else if (ImGui::IsMouseHoveringRect(x_minus_min, x_minus_max, true)) {
+            view.zx = std::max(1.0f, view.zx / 1.5f);
+            toolbar_activated = true;
+        } else if (ImGui::IsMouseHoveringRect(y_minus_min, y_minus_max, true)) {
+            view.zy = std::max(1.0f, view.zy / 1.5f);
+            toolbar_activated = true;
         } else if (ImGui::IsMouseHoveringRect(reset_min, reset_max, true)) {
             view = View{};
+            toolbar_activated = true;
+        } else if (ImGui::IsMouseHoveringRect(smooth_min, smooth_max, true)) {
+            // Popup hit testing is unreliable when the chart's invisible
+            // item is underneath it on Android. A tap on the combo cycles
+            // through the same smoothing choices as the popup.
+            smooth_window = (smooth_window + 1) % 4;
             toolbar_activated = true;
         }
     }
     // The chart's invisible hit area is deliberately behind the toolbar. A
     // touch that starts on a control must never become a chart drag or reset.
-    if (chart_hovered && !toolbar_hovered && !toolbar_activated) {
+    const bool plot_hovered = ImGui::IsMouseHoveringRect({left, top}, {right, bottom}, true);
+    if (plot_hovered && !toolbar_hovered && !toolbar_activated) {
         if (io.MouseWheel != 0.0f) {
             const float factor = io.MouseWheel > 0 ? 1.25f : .8f;
             const float mx = std::clamp((io.MousePos.x - left) / width, 0.0f, 1.0f);
