@@ -306,7 +306,7 @@ void plot_multi(const char* title, const char* id,
     bool toolbar_activated = false;
     ImVec2 x_min{}, x_max{}, x_minus_min{}, x_minus_max{};
     ImVec2 y_min{}, y_max{}, y_minus_min{}, y_minus_max{};
-    ImVec2 reset_min{}, reset_max{}, smooth_min{}, smooth_max{};
+    ImVec2 reset_min{}, reset_max{}, bottom_min{}, bottom_max{}, smooth_min{}, smooth_max{};
     if (ImGui::Button("X+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view.zx = std::min(256.0f, view.zx * 1.5f);
         toolbar_activated = true;
@@ -338,6 +338,12 @@ void plot_multi(const char* title, const char* id,
         toolbar_activated = true;
     }
     reset_min = ImGui::GetItemRectMin(); reset_max = ImGui::GetItemRectMax();
+    ImGui::SameLine(0, 5.0f * g_ui_scale);
+    if (ImGui::Button("底部", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+        view.cy = .5f / view.zy;
+        toolbar_activated = true;
+    }
+    bottom_min = ImGui::GetItemRectMin(); bottom_max = ImGui::GetItemRectMax();
     const char* smooth_names[] = {"不平滑", "轻度平滑", "中度平滑", "强度平滑"};
     ImGui::SameLine(0, 5.0f * g_ui_scale);
     ImGui::SetNextItemWidth(118.0f * g_ui_scale);
@@ -354,7 +360,7 @@ void plot_multi(const char* title, const char* id,
     ImGui::EndGroup();
     ImGui::PopStyleColor();
     ImGui::PopID();
-    const ImVec2 toolbar_max(toolbar_min.x + 210.0f * g_ui_scale,
+    const ImVec2 toolbar_max(toolbar_min.x + 300.0f * g_ui_scale,
                              toolbar_min.y + 144.0f * g_ui_scale);
     const ImGuiIO& io = ImGui::GetIO();
     const bool toolbar_hovered = ImGui::IsMouseHoveringRect(toolbar_min, toolbar_max, true);
@@ -376,6 +382,9 @@ void plot_multi(const char* title, const char* id,
             toolbar_activated = true;
         } else if (ImGui::IsMouseHoveringRect(reset_min, reset_max, true)) {
             view = View{};
+            toolbar_activated = true;
+        } else if (ImGui::IsMouseHoveringRect(bottom_min, bottom_max, true)) {
+            view.cy = .5f / view.zy;
             toolbar_activated = true;
         } else if (ImGui::IsMouseHoveringRect(smooth_min, smooth_max, true)) {
             // Popup hit testing is unreliable when the chart's invisible
