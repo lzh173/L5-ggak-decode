@@ -224,13 +224,25 @@ void plot_multi(const char* title, const char* id,
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(240.0f, avail.x), std::max(260.0f, avail.y - 8.0f));
     ImGui::InvisibleButton(id, size);
+    const bool chart_hovered = ImGui::IsItemHovered();
     const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
     const float left = min.x + 52.0f, right = max.x - 10.0f, top = min.y + 30.0f;
     const float bottom = max.y - 48.0f, width = std::max(1.0f, right - left), height = std::max(1.0f, bottom - top);
     struct View { float zx = 1.0f, zy = 1.0f, cx = .5f, cy = .5f; };
     static std::unordered_map<std::string, View> views;
     View& view = views[id];
-    if (ImGui::IsItemHovered()) {
+    ImGui::PushID(id);
+    ImGui::TextUnformatted(title);
+    ImGui::SameLine();
+    if (ImGui::Button("X+", ImVec2(52.0f * g_ui_scale, 40.0f * g_ui_scale))) view.zx = std::min(256.0f, view.zx * 1.5f);
+    ImGui::SameLine();
+    if (ImGui::Button("Y+", ImVec2(52.0f * g_ui_scale, 40.0f * g_ui_scale))) view.zy = std::min(256.0f, view.zy * 1.5f);
+    ImGui::SameLine();
+    if (ImGui::Button("复位", ImVec2(72.0f * g_ui_scale, 40.0f * g_ui_scale))) view = View{};
+    ImGui::SameLine();
+    ImGui::TextDisabled("拖动: XY  |  滚轮: XY");
+    ImGui::PopID();
+    if (chart_hovered) {
         const ImGuiIO& io = ImGui::GetIO();
         if (io.MouseWheel != 0.0f) {
             const float factor = io.MouseWheel > 0 ? 1.25f : .8f;
@@ -272,14 +284,26 @@ void plot_multi(const char* title, const char* id,
         const auto& values = *series[s]; if (values.empty()) continue;
         const size_t first = std::min(values.size()-1, static_cast<size_t>(xs * (values.size()-1)));
         const size_t last = std::min(values.size()-1, static_cast<size_t>(xe * (values.size()-1)));
-        const size_t step = std::max<size_t>(1, (last - first + 1) / columns);
+        const size_t point_count = last - first + 1;
+        const size_t step = std::max<size_t>(1, point_count / columns);
         ImVec2 previous{}; bool have = false;
-        for (size_t i = first; i <= last; i += step) {
-            const float ratio = static_cast<float>(i) / std::max<size_t>(1, values.size()-1);
-            const float x = left + width * (ratio-xs) / std::max(.0001f, xe-xs);
-            const float y = bottom - height * ((values[i]-lo)/(hi-lo)-ys) / std::max(.0001f, ye-ys);
-            ImVec2 point{x,y}; if (have) draw->AddLine(previous, point, ImGui::ColorConvertFloat4ToU32(colors[s]), 1.6f); previous=point; have=true;
-            if (i + step < i) break;
+        const ImU32 line_color = ImGui::ColorConvertFloat4ToU32(colors[s]);
+        for (size_t column = 0; column < columns; ++column) {
+            const size_t begin = std::min(last, first + column * point_count / columns);
+            const size_t end = std::min(last + 1, std::max(begin + 1, first + (column + 1) * point_count / columns));
+            float column_lo = values[begin], column_hi = values[begin];
+            for (size_t i = begin + 1; i < end; ++i) {
+                column_lo = std::min(column_lo, values[i]);
+                column_hi = std::max(column_hi, values[i]);
+            }
+            const float ratio = point_count <= 1 ? 0.5f :
+                static_cast<float>(begin - first) / static_cast<float>(std::max<size_t>(1, point_count - 1));
+            const float x = left + width * ratio;
+            const float y_lo = bottom - height * ((column_lo - lo) / (hi - lo) - ys) / std::max(.0001f, ye - ys);
+            const float y_hi = bottom - height * ((column_hi - lo) / (hi - lo) - ys) / std::max(.0001f, ye - ys);
+            draw->AddLine({x, y_lo}, {x, y_hi}, line_color, 1.8f);
+            if (!have) { previous = {x, (y_lo + y_hi) * .5f}; have = true; }
+            else { draw->AddLine(previous, {x, (y_lo + y_hi) * .5f}, line_color, 1.2f); previous = {x, (y_lo + y_hi) * .5f}; }
         }
     }
     draw->PopClipRect();
