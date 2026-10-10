@@ -5,6 +5,7 @@
 
 #include <android/log.h>
 #include <android/api-level.h>
+#include <android/asset_manager.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -26,6 +27,7 @@ std::string g_pending_path, g_pending_name;
 ggak::Data g_data;
 std::string g_status = "请选择 CADU 文件";
 bool g_strict = false;
+ImVector<ImWchar> g_font_ranges;
 
 void log_error(const char* message) {
     __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "%s (EGL error 0x%04x)", message, eglGetError());
@@ -76,11 +78,32 @@ void shutdown_display() {
     g_display = EGL_NO_DISPLAY; g_surface = EGL_NO_SURFACE; g_context = EGL_NO_CONTEXT;
 }
 
-void load_font(ImGuiIO& io) {
-    // Vendor system fonts are not an Android API. Some Android 16 ROMs expose
-    // a readable NotoSansCJK TTC that stb_truetype cannot parse, which aborts
-    // later when ImGui creates the font texture. Keep startup independent of
-    // those implementation-specific files.
+void load_font(android_app* app, ImGuiIO& io) {
+    constexpr const char* font_asset = "fonts/NotoSansSC-UI.ttf";
+    AAsset* asset = AAssetManager_open(app->activity->assetManager, font_asset, AASSET_MODE_BUFFER);
+    if (asset) {
+        const off_t size = AAsset_getLength(asset);
+        void* data = size > 0 ? IM_ALLOC(static_cast<size_t>(size)) : nullptr;
+        const int64_t read = data ? AAsset_read(asset, data, static_cast<size_t>(size)) : 0;
+        AAsset_close(asset);
+        if (read == size) {
+            ImFontGlyphRangesBuilder ranges;
+            ranges.AddRanges(io.Fonts->GetGlyphRangesDefault());
+            ranges.AddText("打开解码器严格校验概览请选择文件尚未加载总帧通过失败填充磁场点"
+                           "粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知");
+            ranges.BuildRanges(&g_font_ranges);
+            if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 22.0f, nullptr,
+                                               g_font_ranges.Data)) {
+                __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded bundled CJK font (%lld bytes)",
+                                    static_cast<long long>(size));
+                return;
+            }
+        }
+        if (data) IM_FREE(data);
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Could not load bundled CJK font");
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Missing asset: %s", font_asset);
+    }
     io.Fonts->AddFontDefault();
     __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded bundled ImGui default font");
 }
@@ -189,7 +212,7 @@ void android_main(android_app* app) {
                 }
                 IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::StyleColorsDark();
                 ImGuiIO& io = ImGui::GetIO(); io.IniFilename = nullptr;
-                load_font(io);
+                load_font(app, io);
                 GLint max_texture_size = 0;
                 glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
                 __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "GL renderer=%s; max texture=%d",
