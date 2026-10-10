@@ -1,7 +1,5 @@
 # GGAK CADU C++ 解码器
 
-根据 `t03-all.py` 实现的 C++17 GGAK CADU 解码器。
-
 ## 功能
 
 - 读取 224 字节 CADU 帧并校验校验和
