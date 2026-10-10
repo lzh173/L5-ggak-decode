@@ -181,7 +181,8 @@ void load_font(android_app* app, ImGuiIO& io) {
                            "填充磁场点粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知"
                            "状态配置数据图表数据点仪器实时输入离线版当前结果个块估计丢帧计数器跳号"
                            "TCP地址端口连接断开NNG消息Idle无完整帧收到提取服务端启动等待已手动"
-                           "失败保存网络调试校验有效数据默认");
+                           "失败保存网络调试校验有效数据默认HostPortConnectDisconnectStatus"
+                           "MessagesCADUFramesResetZoomDragWheel");
             ranges.BuildRanges(&g_font_ranges);
             if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 20.0f * g_ui_scale, nullptr,
                                                g_font_ranges.Data)) {
@@ -338,16 +339,16 @@ void draw_ui() {
     ImGui::TextWrapped("%s", g_status.c_str());
     if (ImGui::Button("打开文件...##open_file", ImVec2(-1, 48.0f * g_ui_scale))) open_picker();
     ImGui::Checkbox("严格校验##strict", &g_strict);
-    ImGui::Spacing(); ImGui::TextUnformatted("TCP 实时"); ImGui::Separator();
+    ImGui::Spacing(); ImGui::TextUnformatted("TCP / NNG"); ImGui::Separator();
     static char host[64] = "127.0.0.1";
     static int port = 8888;
-    ImGui::InputText("地址##tcp_host", host, sizeof(host));
-    ImGui::InputInt("端口##tcp_port", &port);
+    ImGui::InputText("Host##tcp_host", host, sizeof(host));
+    ImGui::InputInt("Port##tcp_port", &port);
     if (!g_tcp.connected) {
-        if (ImGui::Button("连接 NNG##tcp_connect", ImVec2(-1, 48.0f * g_ui_scale))) {
+        if (ImGui::Button("Connect NNG##tcp_connect", ImVec2(-1, 52.0f * g_ui_scale))) {
             g_tcp.host = host; g_tcp.port = std::clamp(port, 1, 65535); start_tcp();
         }
-    } else if (ImGui::Button("断开 NNG##tcp_disconnect", ImVec2(-1, 48.0f * g_ui_scale))) stop_tcp();
+    } else if (ImGui::Button("Disconnect NNG##tcp_disconnect", ImVec2(-1, 52.0f * g_ui_scale))) stop_tcp();
     ImGui::TextWrapped("%s", g_tcp.status.c_str());
     ImGui::Text("消息: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
     ImGui::Text("Idle: %llu  无完整帧: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
