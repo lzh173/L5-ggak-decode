@@ -26,5 +26,8 @@ target_include_directories(ggak_android PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends)
 target_compile_definitions(ggak_android PRIVATE IMGUI_IMPL_OPENGL_ES3)
-target_link_options(ggak_android PRIVATE -u ANativeActivity_onCreate)
+target_link_options(ggak_android PRIVATE
+    -u ANativeActivity_onCreate
+    "LINKER:-z,max-page-size=16384"
+    "LINKER:-z,common-page-size=16384")
 target_link_libraries(ggak_android PRIVATE android log EGL GLESv3)

@@ -107,6 +107,24 @@ jobs:
         working-directory: android
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
+      - name: Verify 16 KB native page alignment
+        shell: bash
+        run: |
+          llvm_dir="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          for library in android/app/build/intermediates/stripped_native_libs/debug/stripDebugDebugSymbols/out/lib/*/libggak_android.so; do
+            echo "Checking $library"
+            "$llvm_dir/llvm-readelf" -lW "$library" | awk '
+              $1 == "LOAD" {
+                found = 1
+                if ($NF != "0x4000" && $NF != "0x10000") {
+                  print "Invalid LOAD alignment: " $NF > "/dev/stderr"
+                  bad = 1
+                }
+              }
+              END { exit (!found || bad) }
+            '
+          done
+
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
