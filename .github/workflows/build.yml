@@ -125,6 +125,9 @@ jobs:
             '
           done
 
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 \
+            android/app/build/outputs/apk/debug/app-debug.apk
+
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:

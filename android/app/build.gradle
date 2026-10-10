@@ -28,4 +28,12 @@ android {
             version "3.22.1"
         }
     }
+
+    packaging {
+        jniLibs {
+            // Extract native libraries before loading. This also supports 16 KB
+            // devices when an installer does not preserve APK page alignment.
+            useLegacyPackaging true
+        }
+    }
 }

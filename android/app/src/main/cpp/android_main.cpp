@@ -4,6 +4,7 @@
 #include "backends/imgui_impl_opengl3.h"
 
 #include <android/log.h>
+#include <android/api-level.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -31,6 +32,8 @@ void log_error(const char* message) {
 }
 
 bool init_display(android_app* app) {
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Initializing EGL (SDK %d)",
+                        android_get_device_api_level());
     const EGLint attributes[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
     EGLConfig config = nullptr;
@@ -81,7 +84,8 @@ void load_font(ImGuiIO& io) {
     };
     for (const char* font : fonts) {
         if (access(font, R_OK) != 0) continue;
-        if (io.Fonts->AddFontFromFileTTF(font, 22.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull())) {
+        if (io.Fonts->AddFontFromFileTTF(font, 22.0f, nullptr,
+                                         io.Fonts->GetGlyphRangesChineseSimplifiedCommon())) {
             __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded font: %s", font);
             return;
         }
@@ -156,6 +160,7 @@ void draw_ui() {
 }
 
 void handle_command(android_app*, int32_t command) {
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "App command: %d", command);
     if (command == APP_CMD_TERM_WINDOW && g_display != EGL_NO_DISPLAY) shutdown_display();
 }
 
@@ -175,7 +180,8 @@ Java_io_github_ggak_decoder_MainActivity_nativeSetFile(JNIEnv* env, jclass, jstr
 
 void android_main(android_app* app) {
     app_dummy();
-    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "android_main started");
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "android_main started; activity=%p window=%p",
+                        app->activity, app->window);
     g_app = app;
     app->onAppCmd = handle_command;
     app->onInputEvent = handle_input;
@@ -193,6 +199,10 @@ void android_main(android_app* app) {
                 IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::StyleColorsDark();
                 ImGuiIO& io = ImGui::GetIO(); io.IniFilename = nullptr;
                 load_font(io);
+                GLint max_texture_size = 0;
+                glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+                __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "GL renderer=%s; max texture=%d",
+                                    glGetString(GL_RENDERER), max_texture_size);
                 if (!ImGui_ImplAndroid_Init(app->window) || !ImGui_ImplOpenGL3_Init("#version 300 es")) {
                     __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "ImGui backend initialization failed");
                     shutdown_display();
