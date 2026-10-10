@@ -12,8 +12,10 @@
 #include <cfloat>
 #include <mutex>
 #include <string>
+#include <unistd.h>
 
 namespace {
+constexpr const char* LOG_TAG = "GGAKDecoder";
 android_app* g_app = nullptr;
 EGLDisplay g_display = EGL_NO_DISPLAY;
 EGLSurface g_surface = EGL_NO_SURFACE;
@@ -24,27 +26,44 @@ ggak::Data g_data;
 std::string g_status = "请选择 CADU 文件";
 bool g_strict = false;
 
+void log_error(const char* message) {
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "%s (EGL error 0x%04x)", message, eglGetError());
+}
+
 bool init_display(android_app* app) {
     const EGLint attributes[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_NONE };
-    EGLConfig config;
-    EGLint count;
+    EGLConfig config = nullptr;
+    EGLint count = 0;
     g_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    eglInitialize(g_display, nullptr, nullptr);
-    eglChooseConfig(g_display, attributes, &config, 1, &count);
-    EGLint format;
-    eglGetConfigAttrib(g_display, config, EGL_NATIVE_VISUAL_ID, &format);
+    if (g_display == EGL_NO_DISPLAY) { log_error("eglGetDisplay failed"); return false; }
+    if (eglInitialize(g_display, nullptr, nullptr) != EGL_TRUE) { log_error("eglInitialize failed"); return false; }
+    if (eglChooseConfig(g_display, attributes, &config, 1, &count) != EGL_TRUE || count == 0) {
+        log_error("No OpenGL ES 3 EGL configuration"); return false;
+    }
+    EGLint format = 0;
+    if (eglGetConfigAttrib(g_display, config, EGL_NATIVE_VISUAL_ID, &format) != EGL_TRUE) {
+        log_error("eglGetConfigAttrib failed"); return false;
+    }
     ANativeWindow_setBuffersGeometry(app->window, 0, 0, format);
     const EGLint context_attributes[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
     g_surface = eglCreateWindowSurface(g_display, config, app->window, nullptr);
+    if (g_surface == EGL_NO_SURFACE) { log_error("eglCreateWindowSurface failed"); return false; }
     g_context = eglCreateContext(g_display, config, EGL_NO_CONTEXT, context_attributes);
-    return eglMakeCurrent(g_display, g_surface, g_surface, g_context) == EGL_TRUE;
+    if (g_context == EGL_NO_CONTEXT) { log_error("eglCreateContext failed"); return false; }
+    if (eglMakeCurrent(g_display, g_surface, g_surface, g_context) != EGL_TRUE) {
+        log_error("eglMakeCurrent failed"); return false;
+    }
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "EGL/OpenGL ES initialized");
+    return true;
 }
 
 void shutdown_display() {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplAndroid_Shutdown();
-    ImGui::DestroyContext();
+    if (ImGui::GetCurrentContext()) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplAndroid_Shutdown();
+        ImGui::DestroyContext();
+    }
     if (g_display != EGL_NO_DISPLAY) {
         eglMakeCurrent(g_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         if (g_context != EGL_NO_CONTEXT) eglDestroyContext(g_display, g_context);
@@ -52,6 +71,23 @@ void shutdown_display() {
         eglTerminate(g_display);
     }
     g_display = EGL_NO_DISPLAY; g_surface = EGL_NO_SURFACE; g_context = EGL_NO_CONTEXT;
+}
+
+void load_font(ImGuiIO& io) {
+    const char* fonts[] = {
+        "/system/fonts/NotoSansCJK-Regular.ttc",
+        "/system/fonts/NotoSansSC-Regular.otf",
+        "/system/fonts/DroidSansFallback.ttf"
+    };
+    for (const char* font : fonts) {
+        if (access(font, R_OK) != 0) continue;
+        if (io.Fonts->AddFontFromFileTTF(font, 22.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull())) {
+            __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded font: %s", font);
+            return;
+        }
+    }
+    io.Fonts->AddFontDefault();
+    __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "No readable CJK system font; using ImGui default font");
 }
 
 void open_picker() {
@@ -139,6 +175,7 @@ Java_io_github_ggak_decoder_MainActivity_nativeSetFile(JNIEnv* env, jclass, jstr
 
 void android_main(android_app* app) {
     app_dummy();
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "android_main started");
     g_app = app;
     app->onAppCmd = handle_command;
     app->onInputEvent = handle_input;
@@ -148,14 +185,20 @@ void android_main(android_app* app) {
             if (source) source->process(app, source);
             if (app->destroyRequested) break;
             if (g_display == EGL_NO_DISPLAY && app->window) {
-                if (!init_display(app)) return;
+                if (!init_display(app)) {
+                    shutdown_display();
+                    ANativeActivity_finish(app->activity);
+                    return;
+                }
                 IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::StyleColorsDark();
                 ImGuiIO& io = ImGui::GetIO(); io.IniFilename = nullptr;
-                const char* fonts[] = { "/system/fonts/NotoSansCJK-Regular.ttc", "/system/fonts/NotoSansSC-Regular.otf" };
-                bool loaded = false;
-                for (const char* font : fonts) if (io.Fonts->AddFontFromFileTTF(font, 22.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull())) { loaded = true; break; }
-                if (!loaded) io.Fonts->AddFontDefault();
-                ImGui_ImplAndroid_Init(app->window); ImGui_ImplOpenGL3_Init("#version 300 es");
+                load_font(io);
+                if (!ImGui_ImplAndroid_Init(app->window) || !ImGui_ImplOpenGL3_Init("#version 300 es")) {
+                    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "ImGui backend initialization failed");
+                    shutdown_display();
+                    ANativeActivity_finish(app->activity);
+                    return;
+                }
                 break;
             }
         }
