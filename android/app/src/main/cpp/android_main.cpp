@@ -276,6 +276,9 @@ void plot_multi(const char* title, const char* id,
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(240.0f, avail.x), std::max(260.0f, avail.y - 8.0f));
     ImGui::InvisibleButton(id, size);
+    // The chart hit area covers the floating toolbar. Allow later toolbar
+    // items to win hit testing when the user taps a control over the chart.
+    ImGui::SetItemAllowOverlap();
     const bool chart_hovered = ImGui::IsItemHovered();
     const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
     const float left = min.x + 52.0f, right = max.x - 10.0f, top = min.y + 30.0f;
