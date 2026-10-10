@@ -304,20 +304,24 @@ void plot_multi(const char* title, const char* id,
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 22, 25, 220));
     ImGui::BeginGroup();
     bool toolbar_activated = false;
+    ImVec2 x_min{}, x_max{}, y_min{}, y_max{}, reset_min{}, reset_max{};
     if (ImGui::Button("X+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view.zx = std::min(256.0f, view.zx * 1.5f);
         toolbar_activated = true;
     }
+    x_min = ImGui::GetItemRectMin(); x_max = ImGui::GetItemRectMax();
     ImGui::SameLine(0, 5.0f * g_ui_scale);
     if (ImGui::Button("Y+", ImVec2(54.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view.zy = std::min(256.0f, view.zy * 1.5f);
         toolbar_activated = true;
     }
+    y_min = ImGui::GetItemRectMin(); y_max = ImGui::GetItemRectMax();
     ImGui::SameLine(0, 5.0f * g_ui_scale);
     if (ImGui::Button("复位", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) {
         view = View{};
         toolbar_activated = true;
     }
+    reset_min = ImGui::GetItemRectMin(); reset_max = ImGui::GetItemRectMax();
     ImGui::SameLine(0, 5.0f * g_ui_scale);
     const char* smooth_names[] = {"不平滑", "轻度平滑", "中度平滑", "强度平滑"};
     ImGui::SetNextItemWidth(118.0f * g_ui_scale);
@@ -335,11 +339,26 @@ void plot_multi(const char* title, const char* id,
     ImGui::PopID();
     const ImVec2 toolbar_max(toolbar_min.x + 319.0f * g_ui_scale,
                              toolbar_min.y + 44.0f * g_ui_scale);
+    const ImGuiIO& io = ImGui::GetIO();
     const bool toolbar_hovered = ImGui::IsMouseHoveringRect(toolbar_min, toolbar_max, true);
+    // Android's touch backend can leave the chart InvisibleButton as the
+    // active item when controls are drawn over it. Handle a fresh tap by its
+    // screen rectangle as a fallback, so the visible controls always work.
+    if (!toolbar_activated && io.MouseClicked[ImGuiMouseButton_Left]) {
+        if (ImGui::IsMouseHoveringRect(x_min, x_max, true)) {
+            view.zx = std::min(256.0f, view.zx * 1.5f);
+            toolbar_activated = true;
+        } else if (ImGui::IsMouseHoveringRect(y_min, y_max, true)) {
+            view.zy = std::min(256.0f, view.zy * 1.5f);
+            toolbar_activated = true;
+        } else if (ImGui::IsMouseHoveringRect(reset_min, reset_max, true)) {
+            view = View{};
+            toolbar_activated = true;
+        }
+    }
     // The chart's invisible hit area is deliberately behind the toolbar. A
     // touch that starts on a control must never become a chart drag or reset.
     if (chart_hovered && !toolbar_hovered && !toolbar_activated) {
-        const ImGuiIO& io = ImGui::GetIO();
         if (io.MouseWheel != 0.0f) {
             const float factor = io.MouseWheel > 0 ? 1.25f : .8f;
             const float mx = std::clamp((io.MousePos.x - left) / width, 0.0f, 1.0f);
