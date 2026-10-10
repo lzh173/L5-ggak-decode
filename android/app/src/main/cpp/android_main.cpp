@@ -77,21 +77,12 @@ void shutdown_display() {
 }
 
 void load_font(ImGuiIO& io) {
-    const char* fonts[] = {
-        "/system/fonts/NotoSansCJK-Regular.ttc",
-        "/system/fonts/NotoSansSC-Regular.otf",
-        "/system/fonts/DroidSansFallback.ttf"
-    };
-    for (const char* font : fonts) {
-        if (access(font, R_OK) != 0) continue;
-        if (io.Fonts->AddFontFromFileTTF(font, 22.0f, nullptr,
-                                         io.Fonts->GetGlyphRangesChineseSimplifiedCommon())) {
-            __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded font: %s", font);
-            return;
-        }
-    }
+    // Vendor system fonts are not an Android API. Some Android 16 ROMs expose
+    // a readable NotoSansCJK TTC that stb_truetype cannot parse, which aborts
+    // later when ImGui creates the font texture. Keep startup independent of
+    // those implementation-specific files.
     io.Fonts->AddFontDefault();
-    __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "No readable CJK system font; using ImGui default font");
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded bundled ImGui default font");
 }
 
 void open_picker() {
