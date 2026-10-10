@@ -225,13 +225,14 @@ void load_font(android_app* app, ImGuiIO& io) {
         if (read == size) {
             ImFontGlyphRangesBuilder ranges;
             ranges.AddRanges(io.Fonts->GetGlyphRangesDefault());
+            ranges.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
             ranges.AddText("打开文件加载并解码解码器严格校验概览请选择尚未加载总帧通过失败"
                            "填充磁场点粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知"
                            "状态配置数据图表数据点仪器实时输入离线版当前结果个块估计丢帧计数器跳号"
                            "TCP地址端口连接断开NNG消息Idle空闲无完整帧收到提取服务端启动等待已手动"
                            "失败保存网络调试校验有效数据默认数据类型连接中连接失败未连接"
                            "图表缩放拖动滚轮平滑不平滑轻度中度强度复位有效点太阳能量谱"
-                           "总帧校验通过校验失败填充帧源编号数据点概览当前解码结果"
+                           "总帧校验通过校验失败填充帧源编号数据点概览当前解码结果详情仪器"
                            "MessagesCADUFramesResetZoomDragWheel");
             ranges.BuildRanges(&g_font_ranges);
             if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 20.0f * g_ui_scale, nullptr,
