@@ -649,6 +649,26 @@ void draw_ui() {
                         static_cast<unsigned long long>(g_data.missing_frames));
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("关于##about_tab")) {
+            ImGui::BeginChild("about_content", ImVec2(0, 0), false);
+            ImGui::TextUnformatted("GGAK CADU 解码器");
+            ImGui::TextDisabled("图形化卫星仪器数据解码工具");
+            ImGui::Separator();
+            ImGui::TextUnformatted("作者");
+            ImGui::TextWrapped("lzh173");
+            ImGui::Spacing();
+            ImGui::TextUnformatted("项目地址");
+            ImGui::TextWrapped("https://github.com/lzh173/L5-ggak-decode/");
+            ImGui::Spacing();
+            ImGui::TextUnformatted("许可证：GNU Affero General Public License v3.0 (AGPL-3.0)");
+            ImGui::TextWrapped("本项目以 AGPL-3.0 许可证发布。你可以运行、研究、复制和修改本软件，并按照许可证条款再发布修改后的版本。");
+            ImGui::TextWrapped("再发布时必须保留版权及许可证声明，并向接收者提供许可证文本和对应源代码。若你通过网络向用户提供修改后的程序，也必须向这些用户提供获取对应源代码的方式。");
+            ImGui::TextWrapped("完整权利与义务请查看项目仓库中的 LICENSE 文件。许可证条款优先于本页面的简要说明。");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Copyright (C) lzh173");
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
     ImGui::EndChild();
