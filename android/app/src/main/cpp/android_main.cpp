@@ -45,22 +45,60 @@ struct TcpSource {
     nng_socket socket{NNG_SOCKET_INITIALIZER};
     nng_dialer dialer{NNG_DIALER_INITIALIZER};
     bool connected = false;
-    uint64_t messages = 0, decode_frames = 0, idle_messages = 0, bad_messages = 0;
+    bool pipe_connected = false;
+    uint64_t pipe_adds = 0, pipe_removes = 0;
+    uint64_t messages = 0, valid_messages = 0, bad_messages = 0, decode_frames = 0;
+    uint64_t idle_messages = 0, idle_frames = 0, sync_words = 0, unsynced_bytes = 0;
+    uint64_t checksum_pass = 0, checksum_fail = 0;
     size_t last_size = 0;
+    std::string last_preview = "暂无消息";
     std::string host = "127.0.0.1";
     int port = 8888;
-    std::string status = "Disconnected";
+    std::string status = "未连接";
     ggak::FrameDecodeState decoder;
 } g_tcp;
+
+void on_pipe_event(nng_pipe, nng_pipe_ev event, void*) {
+    if (event == NNG_PIPE_EV_ADD_POST) {
+        g_tcp.pipe_connected = true;
+        ++g_tcp.pipe_adds;
+    } else if (event == NNG_PIPE_EV_REM_POST) {
+        g_tcp.pipe_connected = false;
+        ++g_tcp.pipe_removes;
+    }
+}
+
+size_t count_asm(const uint8_t* bytes, size_t size) {
+    size_t count = 0;
+    for (size_t i = 0; i + CADU_ASM.size() <= size; ++i)
+        if (std::equal(CADU_ASM.begin(), CADU_ASM.end(), bytes + i)) ++count;
+    return count;
+}
+
+std::string packet_preview(const uint8_t* bytes, size_t size) {
+    std::ostringstream out;
+    const size_t shown = std::min<size_t>(size, 32);
+    for (size_t i = 0; i < shown; ++i) {
+        if (i) out << ' ';
+        char text[4]; std::snprintf(text, sizeof(text), "%02X", bytes[i]); out << text;
+    }
+    if (size > shown) out << " ...";
+    return out.str();
+}
 
 bool start_tcp() {
     if (g_tcp.connected) return true;
     const std::string url = "tcp://" + g_tcp.host + ":" + std::to_string(g_tcp.port);
     int result = nng_sub0_open_raw(&g_tcp.socket);
-    if (!result) result = nng_dialer_create(&g_tcp.dialer, g_tcp.socket, url.c_str());
+    if (!result) {
+        nng_pipe_notify(g_tcp.socket, NNG_PIPE_EV_ADD_POST, on_pipe_event, nullptr);
+        nng_pipe_notify(g_tcp.socket, NNG_PIPE_EV_REM_POST, on_pipe_event, nullptr);
+        result = nng_dialer_create(&g_tcp.dialer, g_tcp.socket, url.c_str());
+    }
     if (!result) result = nng_dialer_start(g_tcp.dialer, NNG_FLAG_NONBLOCK);
     if (result) { g_tcp.status = std::string("NNG error: ") + nng_strerror(result); return false; }
-    g_tcp.connected = true; g_tcp.status = "NNG started, waiting for server"; g_tcp.decoder = {};
+    g_tcp.connected = true; g_tcp.pipe_connected = false;
+    g_tcp.status = "NNG 已启动，等待服务端"; g_tcp.decoder = {};
     return true;
 }
 
@@ -68,7 +106,7 @@ void stop_tcp() {
     if (g_tcp.connected) nng_close(g_tcp.socket);
     g_tcp.socket = nng_socket{NNG_SOCKET_INITIALIZER};
     g_tcp.dialer = nng_dialer{NNG_DIALER_INITIALIZER};
-    g_tcp.connected = false; g_tcp.status = "Disconnected";
+    g_tcp.connected = false; g_tcp.pipe_connected = false; g_tcp.status = "未连接";
 }
 
 void poll_tcp() {
@@ -77,25 +115,34 @@ void poll_tcp() {
         void* raw = nullptr; size_t size = 0;
         const int result = nng_recv(g_tcp.socket, &raw, &size, NNG_FLAG_NONBLOCK | NNG_FLAG_ALLOC);
         if (result == NNG_EAGAIN) break;
-        if (result) { g_tcp.status = std::string("NNG receive error: ") + nng_strerror(result); stop_tcp(); return; }
+        if (result) { g_tcp.status = std::string("NNG 接收失败: ") + nng_strerror(result); stop_tcp(); return; }
         ++g_tcp.messages; g_tcp.last_size = size;
         const auto* bytes = static_cast<const uint8_t*>(raw);
+        g_tcp.last_preview = packet_preview(bytes, size);
         bool fill = size && std::all_of(bytes, bytes + size, [](uint8_t b) { return b == 0x33; });
-        if (fill) { ++g_tcp.idle_messages; g_tcp.status = "Idle message (0x33)"; nng_free(raw, size); continue; }
+        if (fill) { ++g_tcp.idle_messages; g_tcp.status = "收到 0x33 空闲消息"; nng_free(raw, size); continue; }
+        ++g_tcp.valid_messages;
+        g_tcp.sync_words += count_asm(bytes, size);
         size_t cursor = 0, frames = 0;
         while (cursor + ggak::FRAME <= size) {
             size_t sync = cursor;
             while (sync + CADU_ASM.size() <= size && !std::equal(CADU_ASM.begin(), CADU_ASM.end(), bytes + sync)) ++sync;
             if (sync + ggak::FRAME > size) break;
+            if (sync > cursor) g_tcp.unsynced_bytes += sync - cursor;
             std::array<uint8_t, ggak::FRAME> frame{};
             std::copy_n(bytes + sync, ggak::FRAME, frame.begin());
+            if (frame[4] == 0x77 || frame[4] == 0x88) ++g_tcp.idle_frames;
             if (g_tcp.decoder.previous_coarse >= 0 && g_tcp.decoder.previous_coarse - int(ggak::be16(frame.data() + 10)) > 50000)
                 g_tcp.decoder.coarse_offset += 65536;
+            const uint64_t pass = g_data.pass, fail = g_data.fail;
             ggak::decode_frame(frame, g_strict, g_data, g_tcp.decoder);
+            if (g_data.pass > pass) ++g_tcp.checksum_pass;
+            if (g_data.fail > fail) ++g_tcp.checksum_fail;
             ++g_tcp.decode_frames; ++frames; cursor = sync + ggak::FRAME;
         }
         if (!frames) ++g_tcp.bad_messages;
-        g_tcp.status = frames ? "NNG message: " + std::to_string(frames) + " CADU" : "No complete CADU";
+        g_tcp.status = frames ? "收到 NNG 消息，提取 " + std::to_string(frames) + " 帧" :
+                                (g_tcp.sync_words ? "找到 ASM，但没有完整 CADU" : "未找到 CADU ASM");
         nng_free(raw, size);
     }
 }
@@ -273,7 +320,8 @@ void plot_multi(const char* title, const char* id,
     if (ImGui::Button("复位", ImVec2(78.0f * g_ui_scale, 44.0f * g_ui_scale))) view = View{};
     ImGui::SameLine(0, 5.0f * g_ui_scale);
     const char* smooth_names[] = {"不平滑", "轻度平滑", "中度平滑", "强度平滑"};
-    if (ImGui::BeginCombo("##smooth", smooth_names[smooth_window], ImVec2(118.0f * g_ui_scale, 44.0f * g_ui_scale))) {
+    ImGui::SetNextItemWidth(118.0f * g_ui_scale);
+    if (ImGui::BeginCombo("##smooth", smooth_names[smooth_window])) {
         for (int i = 0; i < 4; ++i) {
             if (ImGui::Selectable(smooth_names[i], smooth_window == i)) smooth_window = i;
         }
@@ -377,7 +425,19 @@ void draw_ui() {
     } else if (ImGui::Button("Disconnect NNG##tcp_disconnect", ImVec2(-1, 52.0f * g_ui_scale))) stop_tcp();
     ImGui::TextWrapped("%s", g_tcp.status.c_str());
     ImGui::Text("消息: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
-    ImGui::Text("空闲: %llu  异常: %llu", (unsigned long long)g_tcp.idle_messages, (unsigned long long)g_tcp.bad_messages);
+    if (ImGui::CollapsingHeader("网络调试详情")) {
+        ImGui::Text("有效消息: %llu  异常消息: %llu", (unsigned long long)g_tcp.valid_messages,
+                    (unsigned long long)g_tcp.bad_messages);
+        ImGui::Text("空闲消息: %llu  空闲帧: %llu", (unsigned long long)g_tcp.idle_messages,
+                    (unsigned long long)g_tcp.idle_frames);
+        ImGui::Text("ASM: %llu  未同步字节: %llu", (unsigned long long)g_tcp.sync_words,
+                    (unsigned long long)g_tcp.unsynced_bytes);
+        ImGui::Text("校验通过/失败: %llu / %llu", (unsigned long long)g_tcp.checksum_pass,
+                    (unsigned long long)g_tcp.checksum_fail);
+        ImGui::Text("NNG pipe: %s  建立/断开: %llu / %llu", g_tcp.pipe_connected ? "已连接" : "未连接",
+                    (unsigned long long)g_tcp.pipe_adds, (unsigned long long)g_tcp.pipe_removes);
+        ImGui::TextWrapped("最近消息: %s", g_tcp.last_preview.c_str());
+    }
     ImGui::Spacing(); ImGui::TextUnformatted("状态"); ImGui::Separator();
     if (g_data.total) {
         ImGui::TextWrapped("配置: %s", g_data.profile.c_str());
