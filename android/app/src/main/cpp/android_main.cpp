@@ -6,6 +6,7 @@
 #include <android/log.h>
 #include <android/api-level.h>
 #include <android/asset_manager.h>
+#include <android/configuration.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -28,6 +29,7 @@ ggak::Data g_data;
 std::string g_status = "请选择 CADU 文件";
 bool g_strict = false;
 ImVector<ImWchar> g_font_ranges;
+float g_ui_scale = 1.0f;
 
 void log_error(const char* message) {
     __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "%s (EGL error 0x%04x)", message, eglGetError());
@@ -78,6 +80,23 @@ void shutdown_display() {
     g_display = EGL_NO_DISPLAY; g_surface = EGL_NO_SURFACE; g_context = EGL_NO_CONTEXT;
 }
 
+void configure_touch_ui(android_app* app) {
+    const int density = AConfiguration_getDensity(app->config);
+    const float density_scale = density > 0 && density != ACONFIGURATION_DENSITY_DEFAULT
+        ? static_cast<float>(density) / 240.0f : 2.0f;
+    g_ui_scale = std::clamp(density_scale, 1.75f, 2.5f);
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.ScaleAllSizes(g_ui_scale);
+    style.WindowRounding = 0.0f;
+    style.FrameRounding = 5.0f * g_ui_scale;
+    style.TabRounding = 5.0f * g_ui_scale;
+    style.GrabMinSize = 18.0f * g_ui_scale;
+    style.TouchExtraPadding = ImVec2(5.0f * g_ui_scale, 5.0f * g_ui_scale);
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Touch UI scale %.2f (density %d)",
+                        g_ui_scale, density);
+}
+
 void load_font(android_app* app, ImGuiIO& io) {
     constexpr const char* font_asset = "fonts/NotoSansSC-UI.ttf";
     AAsset* asset = AAssetManager_open(app->activity->assetManager, font_asset, AASSET_MODE_BUFFER);
@@ -89,10 +108,11 @@ void load_font(android_app* app, ImGuiIO& io) {
         if (read == size) {
             ImFontGlyphRangesBuilder ranges;
             ranges.AddRanges(io.Fonts->GetGlyphRangesDefault());
-            ranges.AddText("打开解码器严格校验概览请选择文件尚未加载总帧通过失败填充磁场点"
-                           "粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知");
+            ranges.AddText("打开文件加载并解码解码器严格校验概览请选择尚未加载总帧通过失败"
+                           "填充磁场点粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知"
+                           "状态配置数据图表数据点仪器实时输入离线版当前结果个块估计丢帧计数器跳号");
             ranges.BuildRanges(&g_font_ranges);
-            if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 22.0f, nullptr,
+            if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 20.0f * g_ui_scale, nullptr,
                                                g_font_ranges.Data)) {
                 __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Loaded bundled CJK font (%lld bytes)",
                                     static_cast<long long>(size));
@@ -146,30 +166,80 @@ void draw_ui() {
     ImGui::Begin("GGAK Android", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
     ImGui::TextUnformatted("GGAK CADU 解码器"); ImGui::SameLine(); ImGui::TextDisabled("%s", g_status.c_str());
     ImGui::Separator();
-    if (ImGui::Button("打开 CADU...", {180, 44})) open_picker();
-    ImGui::SameLine(); ImGui::Checkbox("严格校验", &g_strict);
-    if (ImGui::BeginTabBar("tabs")) {
-        if (ImGui::BeginTabItem("概览")) {
+    ImGui::BeginChild("sidebar", ImVec2(285.0f * g_ui_scale, 0), true);
+    ImGui::TextUnformatted("文件"); ImGui::Separator();
+    ImGui::TextWrapped("%s", g_status.c_str());
+    if (ImGui::Button("打开文件...##open_file", ImVec2(-1, 48.0f * g_ui_scale))) open_picker();
+    ImGui::Checkbox("严格校验##strict", &g_strict);
+    ImGui::Spacing(); ImGui::TextUnformatted("状态"); ImGui::Separator();
+    if (g_data.total) {
+        ImGui::TextWrapped("配置: %s", g_data.profile.c_str());
+        ImGui::Text("Source ID: 0x%02X", g_data.source);
+        ImGui::Text("总帧: %llu", static_cast<unsigned long long>(g_data.total));
+    } else {
+        ImGui::TextDisabled("尚未加载 CADU 文件");
+    }
+    ImGui::Spacing(); ImGui::TextUnformatted("数据类型"); ImGui::Separator();
+    ImGui::BulletText("FM-VE 磁场");
+    ImGui::BulletText("GALS-VE 粒子");
+    ImGui::BulletText("SKIF-VE/V ESA");
+    ImGui::BulletText("SKIF-VE/G ESA");
+    ImGui::BulletText("ISP-2M / SER");
+    ImGui::EndChild();
+    ImGui::SameLine();
+
+    ImGui::BeginChild("workspace", ImVec2(0, 0), false);
+    if (ImGui::BeginTabBar("main_tabs")) {
+        if (ImGui::BeginTabItem("概览##overview_tab")) {
             if (!g_data.total) ImGui::TextDisabled("尚未加载 CADU 文件");
-            else if (ImGui::BeginTable("metrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-                ImGui::TableNextColumn(); metric("总帧", g_data.total);
-                ImGui::TableNextColumn(); metric("校验通过", g_data.pass);
-                ImGui::TableNextColumn(); metric("校验失败", g_data.fail);
-                ImGui::TableNextColumn(); metric("填充帧", g_data.fill);
-                ImGui::TableNextColumn(); metric("FM-VE 点", g_data.mag[0].size());
-                ImGui::TableNextColumn(); metric("GALS-VE 点", g_data.particle[0].size());
-                ImGui::TableNextColumn(); metric("ESA-V 包", g_data.esa_v.size());
-                ImGui::TableNextColumn(); metric("ESA-G 包", g_data.esa_g.size());
-                ImGui::EndTable();
+            else {
+                ImGui::Text("配置: %s    Source ID: 0x%02X", g_data.profile.c_str(), g_data.source);
+                ImGui::Spacing();
+                if (ImGui::BeginTable("metrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                                    ImGuiTableFlags_SizingStretchProp)) {
+                    ImGui::TableNextColumn(); metric("总帧", g_data.total);
+                    ImGui::TableNextColumn(); metric("校验通过", g_data.pass);
+                    ImGui::TableNextColumn(); metric("校验失败", g_data.fail);
+                    ImGui::TableNextColumn(); metric("填充帧", g_data.fill);
+                    ImGui::EndTable();
+                }
+                ImGui::Spacing(); ImGui::TextUnformatted("数据点概览");
+                ImGui::BulletText("FM-VE 磁场: %d", static_cast<int>(g_data.mag[0].size()));
+                ImGui::BulletText("GALS-VE 粒子: %d", static_cast<int>(g_data.particle[0].size()));
+                ImGui::BulletText("SKIF-VE/V ESA: %d 包", static_cast<int>(g_data.esa_v.size()));
+                ImGui::BulletText("SKIF-VE/G ESA: %d 包", static_cast<int>(g_data.esa_g.size()));
+                ImGui::BulletText("ISP-2M TSI: %d", static_cast<int>(g_data.tsi.size()));
+                ImGui::BulletText("SKIF-VE SER: %d", static_cast<int>(g_data.ser.size()));
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("FM-VE")) { plot("磁场 |B|", g_data.mag[0]); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("GALS-VE")) { plot("粒子计数", g_data.particle[0]); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("ISP-2M")) { plot("太阳总辐照度", g_data.tsi); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("SER")) { plot("SKIF-VE SER", g_data.ser); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("图表##charts_tab")) {
+            if (!g_data.total) ImGui::TextDisabled("尚未加载 CADU 文件");
+            else if (ImGui::BeginTabBar("instrument_tabs")) {
+                if (ImGui::BeginTabItem("FM-VE 磁场")) { plot("磁场 |B|", g_data.mag[0]); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot("粒子计数", g_data.particle[0]); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("ISP-2M")) { plot("太阳总辐照度", g_data.tsi); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("SER")) { plot("SKIF-VE SER", g_data.ser); ImGui::EndTabItem(); }
+                ImGui::EndTabBar();
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("数据##data_tab")) {
+            ImGui::TextUnformatted("当前解码结果"); ImGui::Separator();
+            ImGui::Text("FM-VE: %d 个点", static_cast<int>(g_data.mag[0].size()));
+            ImGui::Text("GALS-VE: %d 个点", static_cast<int>(g_data.particle[0].size()));
+            ImGui::Text("SKIF-VE/V ESA: %d 个包", static_cast<int>(g_data.esa_v.size()));
+            ImGui::Text("SKIF-VE/G ESA: %d 个包", static_cast<int>(g_data.esa_g.size()));
+            ImGui::Text("ISP-2M: %d 个点", static_cast<int>(g_data.tsi.size()));
+            ImGui::Text("SER: %d 个点", static_cast<int>(g_data.ser.size()));
+            ImGui::Text("计数器跳号: %llu 次，估计丢帧: %llu",
+                        static_cast<unsigned long long>(g_data.frame_gaps),
+                        static_cast<unsigned long long>(g_data.missing_frames));
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
+    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -212,6 +282,7 @@ void android_main(android_app* app) {
                 }
                 IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::StyleColorsDark();
                 ImGuiIO& io = ImGui::GetIO(); io.IniFilename = nullptr;
+                configure_touch_ui(app);
                 load_font(app, io);
                 GLint max_texture_size = 0;
                 glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
