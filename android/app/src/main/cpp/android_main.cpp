@@ -96,7 +96,7 @@ bool start_tcp() {
         result = nng_dialer_create(&g_tcp.dialer, g_tcp.socket, url.c_str());
     }
     if (!result) result = nng_dialer_start(g_tcp.dialer, NNG_FLAG_NONBLOCK);
-    if (result) { g_tcp.status = std::string("NNG error: ") + nng_strerror(result); return false; }
+    if (result) { g_tcp.status = std::string("NNG 错误: ") + nng_strerror(result); return false; }
     g_tcp.connected = true; g_tcp.pipe_connected = false;
     g_tcp.status = "NNG 已启动，等待服务端"; g_tcp.decoder = {};
     return true;
@@ -414,16 +414,16 @@ void draw_ui() {
     ImGui::TextWrapped("%s", g_status.c_str());
     if (ImGui::Button("打开文件...##open_file", ImVec2(-1, 48.0f * g_ui_scale))) open_picker();
     ImGui::Checkbox("严格校验##strict", &g_strict);
-    ImGui::Spacing(); ImGui::TextUnformatted("TCP / NNG"); ImGui::Separator();
+    ImGui::Spacing(); ImGui::TextUnformatted("网络连接"); ImGui::Separator();
     static char host[64] = "127.0.0.1";
     static int port = 8888;
-    ImGui::InputText("Host##tcp_host", host, sizeof(host));
-    ImGui::InputInt("Port##tcp_port", &port);
+    ImGui::InputText("地址##tcp_host", host, sizeof(host));
+    ImGui::InputInt("端口##tcp_port", &port);
     if (!g_tcp.connected) {
-        if (ImGui::Button("Connect NNG##tcp_connect", ImVec2(-1, 52.0f * g_ui_scale))) {
+        if (ImGui::Button("连接 NNG##tcp_connect", ImVec2(-1, 52.0f * g_ui_scale))) {
             g_tcp.host = host; g_tcp.port = std::clamp(port, 1, 65535); start_tcp();
         }
-    } else if (ImGui::Button("Disconnect NNG##tcp_disconnect", ImVec2(-1, 52.0f * g_ui_scale))) stop_tcp();
+    } else if (ImGui::Button("断开 NNG##tcp_disconnect", ImVec2(-1, 52.0f * g_ui_scale))) stop_tcp();
     ImGui::TextWrapped("%s", g_tcp.status.c_str());
     ImGui::Text("消息: %llu  CADU: %llu", (unsigned long long)g_tcp.messages, (unsigned long long)g_tcp.decode_frames);
     if (ImGui::CollapsingHeader("网络调试详情")) {
