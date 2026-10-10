@@ -32,10 +32,12 @@ add_library(ggak_android SHARED
 target_compile_features(ggak_android PRIVATE cxx_std_17)
 target_include_directories(ggak_android PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../../../../..
+    ${CMAKE_CURRENT_LIST_DIR}
     ${APP_GLUE}
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends)
 target_compile_definitions(ggak_android PRIVATE IMGUI_IMPL_OPENGL_ES3)
+target_compile_definitions(ggak_android PRIVATE IMGUI_USER_CONFIG=\"android_imconfig.h\")
 target_link_options(ggak_android PRIVATE
     -u ANativeActivity_onCreate
     "LINKER:-z,max-page-size=16384"

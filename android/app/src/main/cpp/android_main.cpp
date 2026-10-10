@@ -216,10 +216,10 @@ void metric(const char* label, uint64_t value) {
 }
 
 void plot_multi(const char* title, const char* id,
-                const std::vector<std::vector<float>>& series,
+                const std::vector<const std::vector<float>*>& series,
                 const std::vector<ImVec4>& colors,
                 const std::vector<const char*>& names) {
-    size_t count = 0; for (const auto& values : series) count = std::max(count, values.size());
+    size_t count = 0; for (const auto* values : series) if (values) count = std::max(count, values->size());
     if (!count) { ImGui::TextDisabled("无数据"); return; }
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(240.0f, avail.x), std::max(260.0f, avail.y - 8.0f));
@@ -250,7 +250,7 @@ void plot_multi(const char* title, const char* id,
     view.cx = std::clamp(view.cx, hx, 1.0f - hx); view.cy = std::clamp(view.cy, hy, 1.0f - hy);
     const float xs = view.cx - hx, xe = view.cx + hx, ys = view.cy - hy, ye = view.cy + hy;
     float lo = FLT_MAX, hi = -FLT_MAX;
-    for (const auto& values : series) for (float value : values) { lo = std::min(lo, value); hi = std::max(hi, value); }
+    for (const auto* values : series) if (values) for (float value : *values) { lo = std::min(lo, value); hi = std::max(hi, value); }
     if (hi <= lo) hi = lo + 1.0f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(min, max, IM_COL32(15, 15, 16, 255)); draw->AddRect(min, max, IM_COL32(70, 74, 80, 255));
@@ -268,7 +268,8 @@ void plot_multi(const char* title, const char* id,
     draw->PushClipRect({left,top},{right,bottom},true);
     const size_t columns = std::max<size_t>(2, static_cast<size_t>(width));
     for (size_t s = 0; s < series.size(); ++s) {
-        const auto& values = series[s]; if (values.empty()) continue;
+        if (!series[s]) continue;
+        const auto& values = *series[s]; if (values.empty()) continue;
         const size_t first = std::min(values.size()-1, static_cast<size_t>(xs * (values.size()-1)));
         const size_t last = std::min(values.size()-1, static_cast<size_t>(xe * (values.size()-1)));
         const size_t step = std::max<size_t>(1, (last - first + 1) / columns);
@@ -288,7 +289,7 @@ void plot_multi(const char* title, const char* id,
 }
 
 void plot(const char* title, const std::vector<float>& values) {
-    plot_multi(title, "##plot", {values}, {ImVec4(.25f,.8f,1,1)}, {"data"});
+    plot_multi(title, "##plot", {&values}, {ImVec4(.25f,.8f,1,1)}, {"data"});
 }
 
 void draw_ui() {
@@ -371,8 +372,8 @@ void draw_ui() {
         if (ImGui::BeginTabItem("图表##charts_tab")) {
             if (!g_data.total) ImGui::TextDisabled("尚未加载 CADU 文件");
             else if (ImGui::BeginTabBar("instrument_tabs")) {
-                if (ImGui::BeginTabItem("FM-VE 磁场")) { plot_multi("FM-VE 磁场", "##plot_mag", {g_data.mag[0],g_data.mag[1],g_data.mag[2],g_data.mag[3],g_data.mag_voltage}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1)}, {"X","Y","Z","B","V"}); ImGui::EndTabItem(); }
-                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot_multi("GALS-VE 粒子计数", "##plot_particle", {g_data.particle[0],g_data.particle[1],g_data.particle[2],g_data.particle[3],g_data.particle[4],g_data.particle[5],g_data.particle[6],g_data.particle[7]}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1),ImVec4(.4f,1,.9f,1),ImVec4(1,.4f,.8f,1),ImVec4(.7f,.8f,1,1)}, {"CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8"}); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("FM-VE 磁场")) { plot_multi("FM-VE 磁场", "##plot_mag", {&g_data.mag[0],&g_data.mag[1],&g_data.mag[2],&g_data.mag[3],&g_data.mag_voltage}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1)}, {"X","Y","Z","B","V"}); ImGui::EndTabItem(); }
+                if (ImGui::BeginTabItem("GALS-VE 粒子")) { plot_multi("GALS-VE 粒子计数", "##plot_particle", {&g_data.particle[0],&g_data.particle[1],&g_data.particle[2],&g_data.particle[3],&g_data.particle[4],&g_data.particle[5],&g_data.particle[6],&g_data.particle[7]}, {ImVec4(1,.4f,.3f,1),ImVec4(.3f,1,.4f,1),ImVec4(.3f,.6f,1,1),ImVec4(1,.8f,.2f,1),ImVec4(.8f,.5f,1,1),ImVec4(.4f,1,.9f,1),ImVec4(1,.4f,.8f,1),ImVec4(.7f,.8f,1,1)}, {"CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8"}); ImGui::EndTabItem(); }
                 if (ImGui::BeginTabItem("ISP-2M")) { plot("太阳总辐照度", g_data.tsi); ImGui::EndTabItem(); }
                 if (ImGui::BeginTabItem("SER")) { plot("SKIF-VE SER", g_data.ser); ImGui::EndTabItem(); }
                 ImGui::EndTabBar();
