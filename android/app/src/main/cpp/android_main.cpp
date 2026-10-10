@@ -179,7 +179,9 @@ void load_font(android_app* app, ImGuiIO& io) {
             ranges.AddRanges(io.Fonts->GetGlyphRangesDefault());
             ranges.AddText("打开文件加载并解码解码器严格校验概览请选择尚未加载总帧通过失败"
                            "填充磁场点粒子计数包太阳总辐照度无数据完成读取无法中没有完整未知"
-                           "状态配置数据图表数据点仪器实时输入离线版当前结果个块估计丢帧计数器跳号");
+                           "状态配置数据图表数据点仪器实时输入离线版当前结果个块估计丢帧计数器跳号"
+                           "TCP地址端口连接断开NNG消息Idle无完整帧收到提取服务端启动等待已手动"
+                           "失败保存网络调试校验有效数据默认");
             ranges.BuildRanges(&g_font_ranges);
             if (io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size), 20.0f * g_ui_scale, nullptr,
                                                g_font_ranges.Data)) {
@@ -301,10 +303,12 @@ void draw_ui() {
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(io.DisplaySize);
-    ImGui::Begin("GGAK Android", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+    ImGui::Begin("GGAK Android", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
     ImGui::TextUnformatted("GGAK CADU 解码器"); ImGui::SameLine(); ImGui::TextDisabled("%s", g_status.c_str());
     ImGui::Separator();
-    ImGui::BeginChild("sidebar", ImVec2(285.0f * g_ui_scale, 0), true);
+    ImGui::BeginChild("sidebar", ImVec2(std::min(360.0f, io.DisplaySize.x * 0.30f), 0), true,
+                      ImGuiWindowFlags_NoScrollbar);
     ImGui::TextUnformatted("文件"); ImGui::Separator();
     ImGui::TextWrapped("%s", g_status.c_str());
     if (ImGui::Button("打开文件...##open_file", ImVec2(-1, 48.0f * g_ui_scale))) open_picker();
