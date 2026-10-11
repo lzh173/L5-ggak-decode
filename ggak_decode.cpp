@@ -95,13 +95,17 @@ struct Decoder {
         const std::uint8_t ft = p[4];
         const std::uint16_t ct = be16(p + 10);
         const double t = ct * TIME_TICK_SECONDS + p[12] * FINE_TIME_STEP;
-        if (ft == 0x77 || ft == 0x88) { ++fill; return; }
-
         if (source_id == 0) {
             source_id = p[9];
             profile = source_id == 0x30 ? "GGAK-E" :
-                      (source_id == 0x31 || source_id == 0x33 ? "GGAK-VE" : "GGAK(未知)");
+                      (source_id == 0x31 || source_id == 0x33 ? "GGAK-VE" :
+                       (source_id == 0x32 ? "GGAK-L4" : "GGAK(未知)"));
         }
+        if (source_id == 0x33 && p[9] == 0x32) {
+            source_id = 0x32;
+            profile = "GGAK-L4";
+        }
+        if (ft == 0x77 || ft == 0x88 || (p[9] == 0x33 && ft == 0x67)) { ++fill; return; }
         const auto* payload = p + PAYLOAD_OFFSET;
         switch (ft) {
         case 0x70: decode_mag(payload, t); break;

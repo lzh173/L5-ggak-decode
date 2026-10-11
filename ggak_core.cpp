@@ -64,17 +64,35 @@ void decode_frame(const std::array<uint8_t, FRAME>& f, bool strict, Data& d, Fra
     if (strict && !ok) return;
     const uint8_t type = f[4];
     ++d.frame_types[type];
-    if (type == 0x77 || type == 0x88) { ++d.fill; return; }
+    if (!d.source) {
+        d.source = f[9];
+        d.profile = d.source == 0x30 ? "GGAK-E" :
+                    (d.source == 0x31 ? "GGAK-VE" :
+                     (d.source == 0x32 ? "GGAK-L4" :
+                      (d.source == 0x33 ? "GGAK-VE" : "GGAK(未知)")));
+    }
+    if (d.source == 0x33 && f[9] == 0x32) {
+        d.source = 0x32;
+        d.profile = "GGAK-L4";
+    }
+    if (type == 0x77 || type == 0x88 || (f[9] == 0x33 && type == 0x67)) { ++d.fill; return; }
     const uint16_t master = be16(f.data() + 5), channel = be16(f.data() + 7);
     if (d.have_master) { const uint16_t delta = uint16_t(master - d.last_master); if (delta > 1 && delta < 60000) { ++d.frame_gaps; d.missing_frames += delta - 1; } }
     d.last_master = master; d.have_master = true;
     if (d.have_channel[type]) { const uint16_t delta = uint16_t(channel - d.last_channel[type]); if (delta > 1 && delta < 60000) { ++d.frame_gaps; d.missing_frames += delta - 1; } }
     d.last_channel[type] = channel; d.have_channel[type] = true;
-    if (!d.source) { d.source = f[9]; d.profile = d.source == 0x30 ? "GGAK-E" : (d.source == 0x31 || d.source == 0x33 ? "GGAK-VE" : "GGAK(未知)"); }
     const uint8_t fill = d.source == 0x30 ? 0xaa : 0x33;
     const double time = frame_time(f, state);
     const uint8_t* p = f.data() + 13;
-    if (type == 0x70) for (std::size_t i = 0; i < 13; ++i) { auto q = p + i * 15; auto x = be16(q + 2), y = be16(q + 4), z = be16(q + 6); if (x <= 10000 && y <= 10000 && z <= 10000 && q[12] != 0xff) { d.mag[0].push_back(float(int(be16(q)) - 2339) * 2.359f); d.mag[1].push_back(float(int(x) - 2339) * 2.359f); d.mag[2].push_back(float(int(y) - 2339) * 2.359f); d.mag[3].push_back(float(int(z) - 2339) * 2.359f); d.mag_voltage.push_back(float(be16(q + 8)) / 125.0f); d.mag_time.push_back(time); } }
+    if (d.source == 0x32 && type != 0x40 && type != 0x70) {
+        // L4 types not yet mapped to physical instruments are retained as a
+        // per-frame payload mean, so their cadence can be inspected safely.
+        double sum = 0.0;
+        std::size_t used = 0;
+        for (std::size_t i = 0; i < PAYLOAD; ++i) if (p[i] != fill) { sum += p[i]; ++used; }
+        if (used) d.l4_payload_mean[type].push_back(float(sum / used));
+    }
+    else if (type == 0x70) for (std::size_t i = 0; i < 13; ++i) { auto q = p + i * 15; auto x = be16(q + 2), y = be16(q + 4), z = be16(q + 6); if (x <= 10000 && y <= 10000 && z <= 10000 && q[12] != 0xff) { d.mag[0].push_back(float(int(be16(q)) - 2339) * 2.359f); d.mag[1].push_back(float(int(x) - 2339) * 2.359f); d.mag[2].push_back(float(int(y) - 2339) * 2.359f); d.mag[3].push_back(float(int(z) - 2339) * 2.359f); d.mag_voltage.push_back(float(be16(q + 8)) / 125.0f); d.mag_time.push_back(time); } }
     else if (type == 0x40) for (std::size_t i = 0; i < 11; ++i) { auto q = p + i * 19; if ((q[0] == 0xa0 || q[0] == 0xa1) && q[3] != fill) { for (std::size_t ch = 0; ch < 8; ++ch) d.particle[ch].push_back(float(be16(q + 3 + ch * 2))); d.particle_time.push_back(time); } }
     else if (type == 0x20 || type == 0x30) { auto& out = type == 0x20 ? d.esa_v : d.esa_g; auto& times = type == 0x20 ? d.esa_v_time : d.esa_g_time; const uint8_t marker = type == 0x20 ? 0x90 : 0x98; for (std::size_t o = 0; o <= 138; o += 69) { auto q = p + o; bool all = true; for (std::size_t j = 0; j < 69; ++j) all &= q[j] == fill; if (q[0] == marker && !all) { EsaRow row{}; for (std::size_t b = 0; b < 32; ++b) row[b] = int16_t(be16(q + 3 + b * 2)); out.push_back(row); times.push_back(time); } } }
     else if (type == 0x50 || type == 0x5c) { const std::size_t before = d.skl_spectral.size(); decode_spectral(p, PAYLOAD, type == 0x50 ? 0xa8 : 0xac, fill, d.skl_spectral, state.spectral_buffer); const std::size_t added = d.skl_spectral.size() - before; d.spectral_packets += added; d.spectral_time.insert(d.spectral_time.end(), added, time); }

@@ -89,3 +89,9 @@ Dear ImGui GUI 同样支持 Linux。Linux 构建使用 GLFW 的 X11/Wayland 后�
 ## 许可证
 
 本项目采用 [GNU Affero General Public License v3.0](LICENSE) 许可证。
+
+## GGAK-L4 初步支持
+
+当前解码器可以识别 GGAK-L4 的源编号 `0x32`，并将 `0x33/0x77` 作为 L4 空闲帧处理。L4 样本中的 `0x40` 粒子计数和 `0x70` 磁场帧暂时复用已验证的 GGAK 数据布局。
+
+L4 的 `0x0C/0x1C`、`0x2C/0x3C` 和 `0x50/0x5C` 已进入“L4 原始诊断”页面，但字段和物理单位尚未确认。页面展示的是排除填充值后的 payload 字节均值，仅用于协议分析，不代表仪器物理量。L4 目录中已确认存在 SKL-E，但其光谱包格式仍需更多样本或协议资料验证。

@@ -24,6 +24,7 @@ struct Data {
     std::vector<EsaRow> esa_v, esa_g;
     std::array<std::vector<float>, 5> housekeeping_a, housekeeping_b, ser_channels;
     std::vector<std::vector<float>> skl_spectral;
+    std::array<std::vector<float>, 256> l4_payload_mean;
     std::vector<double> mag_time, particle_time, tsi_time, ser_time, esa_v_time, esa_g_time, spectral_time;
     uint64_t spectral_packets = 0, housekeeping_b_count = 0, frame_gaps = 0, missing_frames = 0;
     std::array<uint64_t, 256> frame_types{};
