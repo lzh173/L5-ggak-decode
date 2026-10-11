@@ -577,8 +577,8 @@ int main() {
                         else plot_spectral(data.skl_spectral);
                         ImGui::EndTabItem();
                     }
-                    if(data.source == 0x32 && ImGui::BeginTabItem("L4 原始诊断##instrument_l4_raw")) {
-                        ImGui::TextWrapped("L4 的 0x0C/0x1C、0x2C/0x3C 和 0x50/0x5C 格式尚未确认。以下曲线是排除填充值后的帧内字节均值，不代表物理量。");
+                    if(data.source == 0x32 && ImGui::BeginTabItem("L 系列原始诊断##instrument_l_series_raw")) {
+                        ImGui::TextWrapped("source ID 0x32 只能确认 GGAK-L 系列，不能区分 L4/L5。0x0C/0x1C、0x2C/0x3C 和 0x50/0x5C 格式尚未确认。以下曲线是排除填充值后的帧内字节均值，不代表物理量。");
                         ImGui::Separator();
                         const std::array<int, 6> types = {0x0c, 0x1c, 0x2c, 0x3c, 0x50, 0x5c};
                         for(const int type : types) {
@@ -586,7 +586,7 @@ int main() {
                             ImGui::Text("类型 0x%02X: %d 帧", type, static_cast<int>(values.size()));
                             if(!values.empty()) {
                                 const std::string plot_id = "##l4_raw_" + std::to_string(type);
-                                plot_multi("L4 payload byte mean", plot_id.c_str(), {values}, {ImVec4(.3f,.8f,1,1)}, {"mean"});
+                                plot_multi("L-series payload byte mean", plot_id.c_str(), {values}, {ImVec4(.3f,.8f,1,1)}, {"mean"});
                             }
                         }
                         ImGui::EndTabItem();
@@ -625,7 +625,7 @@ int main() {
                         {"GGAK-E/VUSS-E", "太阳紫外辐射传感器", "待接入", "尚无对应解码分支"},
                         {"GGAK-E/FM-E", "磁强计", "已接入", "0x70 磁场/电压"},
                         {"GGAK-E/DIR-E", "太阳 X 射线辐射通量传感器", "待接入", "尚无对应解码分支"},
-                        {"GGAK-E/SKL-E", "太阳宇宙线谱仪", "已接入", "0x50 / 0x5C 光谱；L4 格式待确认"},
+                        {"GGAK-E/SKL-E", "太阳宇宙线谱仪", "已接入", "0x50 / 0x5C 光谱；L 系列格式待确认"},
                     };
                     for(const auto& row : rows) {
                         ImGui::TableNextRow();
@@ -634,7 +634,7 @@ int main() {
                     ImGui::EndTable();
                 }
                 ImGui::Spacing();
-                ImGui::TextDisabled("L4 样本确认存在 SKL-E 相关仪器，但当前尚未验证 L4 的光谱包格式；L4 原始诊断页仅展示 payload 字节统计，不代表物理量。VUSS-E 和 DIR-E 当前也没有对应解码分支。");
+                    ImGui::TextDisabled("当前样本确认存在 SKL-E 相关仪器，但 source ID 0x32 无法区分 L4/L5，光谱包格式仍未验证；L 系列原始诊断页仅展示 payload 字节统计，不代表物理量。VUSS-E 和 DIR-E 当前也没有对应解码分支。");
                 ImGui::EndTabItem();
             }
 #ifdef _WIN32

@@ -68,12 +68,12 @@ void decode_frame(const std::array<uint8_t, FRAME>& f, bool strict, Data& d, Fra
         d.source = f[9];
         d.profile = d.source == 0x30 ? "GGAK-E" :
                     (d.source == 0x31 ? "GGAK-VE" :
-                     (d.source == 0x32 ? "GGAK-L4" :
+                     (d.source == 0x32 ? "GGAK-L 系列" :
                       (d.source == 0x33 ? "GGAK-VE" : "GGAK(未知)")));
     }
     if (d.source == 0x33 && f[9] == 0x32) {
         d.source = 0x32;
-        d.profile = "GGAK-L4";
+        d.profile = "GGAK-L 系列";
     }
     if (type == 0x77 || type == 0x88 || (f[9] == 0x33 && type == 0x67)) { ++d.fill; return; }
     const uint16_t master = be16(f.data() + 5), channel = be16(f.data() + 7);
@@ -85,7 +85,7 @@ void decode_frame(const std::array<uint8_t, FRAME>& f, bool strict, Data& d, Fra
     const double time = frame_time(f, state);
     const uint8_t* p = f.data() + 13;
     if (d.source == 0x32 && type != 0x40 && type != 0x70) {
-        // L4 types not yet mapped to physical instruments are retained as a
+        // L-series types not yet mapped to physical instruments are retained as a
         // per-frame payload mean, so their cadence can be inspected safely.
         double sum = 0.0;
         std::size_t used = 0;

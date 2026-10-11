@@ -99,11 +99,11 @@ struct Decoder {
             source_id = p[9];
             profile = source_id == 0x30 ? "GGAK-E" :
                       (source_id == 0x31 || source_id == 0x33 ? "GGAK-VE" :
-                       (source_id == 0x32 ? "GGAK-L4" : "GGAK(未知)"));
+                       (source_id == 0x32 ? "GGAK-L 系列" : "GGAK(未知)"));
         }
         if (source_id == 0x33 && p[9] == 0x32) {
             source_id = 0x32;
-            profile = "GGAK-L4";
+            profile = "GGAK-L 系列";
         }
         if (ft == 0x77 || ft == 0x88 || (p[9] == 0x33 && ft == 0x67)) { ++fill; return; }
         const auto* payload = p + PAYLOAD_OFFSET;

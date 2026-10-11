@@ -632,8 +632,8 @@ void draw_ui() {
                     else plot_spectral(g_data.skl_spectral);
                     ImGui::EndTabItem();
                 }
-                if (g_data.source == 0x32 && ImGui::BeginTabItem("L4 原始诊断")) {
-                    ImGui::TextWrapped("L4 的 0x0C/0x1C、0x2C/0x3C 和 0x50/0x5C 格式尚未确认。以下是排除填充值后的帧内字节均值，不代表物理量。");
+                if (g_data.source == 0x32 && ImGui::BeginTabItem("L 系列原始诊断")) {
+                    ImGui::TextWrapped("source ID 0x32 只能确认 GGAK-L 系列，不能区分 L4/L5。0x0C/0x1C、0x2C/0x3C 和 0x50/0x5C 格式尚未确认。以下是排除填充值后的帧内字节均值，不代表物理量。");
                     ImGui::Separator();
                     const std::array<int, 6> types = {0x0c, 0x1c, 0x2c, 0x3c, 0x50, 0x5c};
                     for (const int type : types) {
@@ -641,7 +641,7 @@ void draw_ui() {
                         ImGui::Text("类型 0x%02X: %d 帧", type, static_cast<int>(values.size()));
                         if (!values.empty()) {
                             std::vector<const std::vector<float>*> raw = {&values};
-                            plot_multi("L4 payload byte mean", ("##l4_raw_" + std::to_string(type)).c_str(), raw,
+                            plot_multi("L-series payload byte mean", ("##l_series_raw_" + std::to_string(type)).c_str(), raw,
                                        {ImVec4(.3f, .8f, 1, 1)}, {"mean"});
                         }
                     }
