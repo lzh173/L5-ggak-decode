@@ -107,7 +107,7 @@ jobs:
           gradle-version: "8.7"
 
       - name: Prepare Android signing keystore
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         shell: bash
         env:
           GGAK_ANDROID_KEYSTORE_BASE64: ${{ secrets.GGAK_ANDROID_KEYSTORE_BASE64 }}
@@ -121,7 +121,7 @@ jobs:
           test -s "$RUNNER_TEMP/ggak-signing/ggak-release.jks"
 
       - name: Build signed Android release APK
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: android
         env:
           GGAK_ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/ggak-signing/ggak-release.jks
@@ -138,10 +138,10 @@ jobs:
       - name: Verify 16 KB native page alignment
         shell: bash
         env:
-          APK_PATH: ${{ github.event_name == 'push' && 'android/app/build/outputs/apk/release/app-release.apk' || 'android/app/build/outputs/apk/debug/app-debug.apk' }}
+          APK_PATH: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'android/app/build/outputs/apk/release/app-release.apk' || 'android/app/build/outputs/apk/debug/app-debug.apk' }}
         run: |
           llvm_dir="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          native_dir="android/app/build/intermediates/stripped_native_libs/${{ github.event_name == 'push' && 'release' || 'debug' }}/strip${{ github.event_name == 'push' && 'Release' || 'Debug' }}DebugSymbols/out/lib"
+          native_dir="android/app/build/intermediates/stripped_native_libs/${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'release' || 'debug' }}/strip${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'Release' || 'Debug' }}DebugSymbols/out/lib"
           for library in "$native_dir"/*/libggak_android.so; do
             echo "Checking $library"
             "$llvm_dir/llvm-readelf" -lW "$library" | awk '
@@ -160,7 +160,7 @@ jobs:
             "$APK_PATH"
 
       - name: Upload signed Android release APK
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: ggak-android-release
