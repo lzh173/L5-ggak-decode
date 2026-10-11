@@ -3,9 +3,12 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
@@ -171,3 +174,38 @@ jobs:
           name: ggak-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  nightly-release:
+    name: Nightly release
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download desktop and Android artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten release assets
+        shell: bash
+        run: |
+          mkdir -p release
+          find release-assets -type f -exec cp {} release/ \;
+          test -n "$(find release -type f -print -quit)"
+          ls -la release
+
+      - name: Publish nightly prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: GGAK nightly
+          prerelease: true
+          make_latest: false
+          body: |
+            Automated nightly build from `${{ github.sha }}`.
+
+            This release may contain unreleased changes and is intended for testing.
+          files: release/*
+          fail_on_unmatched_files: true
